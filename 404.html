@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AeroSync IMU Real-Time Flight Visualizer</title>
+    <meta name="description" content="Synchronized multi-aircraft 3D flight orientation visualizer for ESP32 IMU sensors via WebSerial, WebSocket Python bridge, or live simulation." />
+    <meta property="og:title" content="AeroSync IMU Real-Time Flight Visualizer" />
+    <meta property="og:description" content="Synchronized multi-aircraft 3D flight orientation visualizer for ESP32 IMU sensors via WebSerial, WebSocket Python bridge, or live simulation." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+      // Automatic fallback loader when GitHub Pages serves raw main branch /index.html instead of gh-pages / dist
+      window.__loadPrebuiltBundle = function () {
+        if (window.__prebuiltLoaded) return;
+        window.__prebuiltLoaded = true;
+        var link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = './public/dist-bundle/app.css';
+        document.head.appendChild(link);
+        var script = document.createElement('script');
+        script.type = 'module';
+        script.src = './public/dist-bundle/app.js';
+        document.head.appendChild(script);
+      };
+      window.addEventListener('DOMContentLoaded', function () {
+        if (
+          window.location.hostname.endsWith('github.io') &&
+          document.querySelector('script[src="/src/main.tsx"]')
+        ) {
+          window.__loadPrebuiltBundle();
+        }
+      });
+    </script>
+    <script type="module" crossorigin src="./assets/index-DY4YidRw.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Cp8yF85Q.css">
+  </head>
+  <body class="bg-slate-950 text-slate-100 antialiased font-sans select-none overflow-hidden min-h-screen">
+    <div id="root"></div>
+  </body>
+</html>
