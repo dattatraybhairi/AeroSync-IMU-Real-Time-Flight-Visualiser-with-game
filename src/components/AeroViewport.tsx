@@ -111,15 +111,26 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
     const container = mountRef.current;
     if (!container) return;
 
-    // 1. Detect Software WebGL
+    let isDisposed = false;
+    let rafId = 0;
+    let timeoutId = 0;
+
+    // 1. Detect Software WebGL safely
     const isSoftwareGl = (() => {
-      const gl = document.createElement('canvas').getContext('webgl2');
-      if (!gl) return true;
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
-      const gpu = String(gl.getParameter(param));
-      gl.getExtension('WEBGL_lose_context')?.loseContext();
-      return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
+      try {
+        const probeCanvas = document.createElement('canvas');
+        const gl =
+          probeCanvas.getContext('webgl2') ||
+          probeCanvas.getContext('webgl');
+        if (!gl) return true;
+        const ext = gl.getExtension('WEBGL_debug_renderer_info');
+        const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
+        const gpu = String(gl.getParameter(param) || '');
+        gl.getExtension('WEBGL_lose_context')?.loseContext();
+        return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
+      } catch {
+        return true;
+      }
     })();
 
     // 2. Setup Scene with Alpine Sky / Night Cockpit Horizon Fog
@@ -137,28 +148,42 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
     camera.position.set(initPos.x + 5.2, initPos.y + 3.2, initPos.z + 8.5);
     cameraRef.current = camera;
 
-    // 4. Setup Renderer
-    const renderer = new THREE.WebGLRenderer({
-      antialias: !isSoftwareGl,
-      powerPreference: 'high-performance',
-      alpha: false,
-    });
+    // 4. Setup Renderer safely
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        antialias: !isSoftwareGl,
+        powerPreference: 'high-performance',
+        alpha: false,
+      });
+    } catch {
+      return;
+    }
+
     renderer.setSize(width, height);
-    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.12;
     renderer.shadowMap.enabled = !isSoftwareGl;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
+    const handleContextLost = (e: Event) => {
+      e.preventDefault();
+    };
+    renderer.domElement.addEventListener('webglcontextlost', handleContextLost, false);
     container.appendChild(renderer.domElement);
 
     // 5. Studio Environment Reflection
-    const pmremGenerator = new THREE.PMREMGenerator(renderer);
-    pmremGenerator.compileEquirectangularShader();
-    const envTexture = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environment = envTexture;
-    pmremGenerator.dispose();
+    try {
+      const pmremGenerator = new THREE.PMREMGenerator(renderer);
+      pmremGenerator.compileEquirectangularShader();
+      const envTexture = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+      scene.environment = envTexture;
+      pmremGenerator.dispose();
+    } catch {
+      // Fallback if PMREM fails on restricted WebGL context
+    }
 
     // 6. Three-Point Studio & Sun Lighting Rig
     const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x3f6212, 0.95);
@@ -282,7 +307,9 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
     // 12. Global Keyboard Listener (WASD / Arrow Keys for Forward, Backward, Left, Right)
     const heldKeys = new Set<string>();
     const onKeyDown = (e: KeyboardEvent) => {
-      if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+      const targetTag = (e.target as HTMLElement | null)?.tagName;
+      if (targetTag && ['INPUT', 'SELECT', 'TEXTAREA'].includes(targetTag)) return;
+      if (!e.key) return;
       heldKeys.add(e.key.toLowerCase());
       if (e.key === 'r' || e.key === 'R') {
         const resetState = { ...INITIAL_FLIGHT_STATE };
@@ -292,6 +319,7 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
+      if (!e.key) return;
       heldKeys.delete(e.key.toLowerCase());
     };
     const onWindowBlur = () => {
@@ -302,11 +330,14 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
     window.addEventListener('blur', onWindowBlur);
 
     if (!isSoftwareGl) {
-      renderer.compile(scene, camera);
+      try {
+        renderer.compile(scene, camera);
+      } catch {
+        // Ignore shader pre-warm issues
+      }
     }
 
     // 13. Pre-allocated Math Scratch Objects (Zero GC in loop)
-    let frameId = 0;
     const clock = new THREE.Clock();
     const targetQuat = new THREE.Quaternion();
     const euler = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -317,22 +348,42 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
     let totalElapsed = 0;
 
     function afterDraw(cb: () => void) {
-      const gl = renderer.getContext() as WebGL2RenderingContext;
-      const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-      gl.flush();
-      const poll = () => {
-        const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
-        if (state === gl.UNSIGNALED) {
-          frameId = window.setTimeout(poll, 5);
-        } else {
-          gl.deleteSync(sync);
-          frameId = window.setTimeout(cb, 70);
+      if (isDisposed) return;
+      try {
+        const gl = renderer.getContext() as WebGL2RenderingContext | null;
+        if (!gl || gl.isContextLost() || typeof gl.fenceSync !== 'function') {
+          timeoutId = window.setTimeout(cb, 70);
+          return;
         }
-      };
-      frameId = window.setTimeout(poll, 5);
+        const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+        gl.flush();
+        if (!sync) {
+          timeoutId = window.setTimeout(cb, 70);
+          return;
+        }
+        const poll = () => {
+          if (isDisposed) return;
+          try {
+            if (gl.isContextLost()) return;
+            const state = gl.getSyncParameter(sync, gl.SYNC_STATUS);
+            if (state === gl.UNSIGNALED) {
+              timeoutId = window.setTimeout(poll, 5);
+            } else {
+              gl.deleteSync(sync);
+              timeoutId = window.setTimeout(cb, 70);
+            }
+          } catch {
+            timeoutId = window.setTimeout(cb, 70);
+          }
+        };
+        timeoutId = window.setTimeout(poll, 5);
+      } catch {
+        timeoutId = window.setTimeout(cb, 70);
+      }
     }
 
     function animateLoop() {
+      if (isDisposed) return;
       const delta = Math.min(clock.getDelta(), 0.08);
       totalElapsed += delta;
 
@@ -458,16 +509,16 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
       if (isSoftwareGl) {
         afterDraw(animateLoop);
       } else {
-        frameId = requestAnimationFrame(animateLoop);
+        rafId = requestAnimationFrame(animateLoop);
       }
     }
 
     animateLoop();
 
     const handleResize = () => {
-      if (!container) return;
-      const w = container.clientWidth;
-      const h = container.clientHeight;
+      if (!container || isDisposed) return;
+      const w = container.clientWidth || 800;
+      const h = container.clientHeight || 600;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
@@ -476,12 +527,14 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
     window.addEventListener('resize', handleResize);
 
     return () => {
+      isDisposed = true;
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onWindowBlur);
-      cancelAnimationFrame(frameId);
-      clearTimeout(frameId);
+      renderer.domElement.removeEventListener('webglcontextlost', handleContextLost);
+      cancelAnimationFrame(rafId);
+      clearTimeout(timeoutId);
       controls.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode) {

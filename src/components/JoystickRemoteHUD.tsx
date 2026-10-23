@@ -72,7 +72,11 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {
+      // Ignore if synthetic pointer event
+    }
     setDragging(true);
     updateStickFromPointer(e.clientX, e.clientY);
   };

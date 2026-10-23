@@ -379,7 +379,7 @@ ESP32 + IMU (MPU6050/BNO055) + ANALOG JOYSTICK CUSTOM FLIGHT REMOTE
 `;
 
   const githubWorkflowCode = `# .github/workflows/deploy.yml
-name: Deploy AeroSync to GitHub Pages
+name: Deploy AeroSync Flight Simulation to GitHub Pages
 
 on:
   push:
@@ -387,7 +387,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -397,7 +397,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -413,17 +413,38 @@ jobs:
       - name: Build static Vite application
         run: npm run build
 
-      - name: Upload artifact
+      - name: Add .nojekyll and SPA 404 fallback
+        run: |
+          touch ./dist/.nojekyll
+          cp ./dist/index.html ./dist/404.html
+
+      - name: Publish dist to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: \${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          force_orphan: true
+
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v5
+        continue-on-error: true
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        if: steps.pages.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
         with:
           path: './dist'
 
   deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    continue-on-error: true
     environment:
       name: github-pages
       url: \${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
@@ -452,8 +473,27 @@ jobs:
       ? 'esp32_imu_joystick_wiring.txt'
       : 'deploy.yml';
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(currentCode);
+  const handleCopy = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(currentCode);
+      } else {
+        throw new Error('Clipboard API unavailable');
+      }
+    } catch {
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = currentCode;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      } catch {
+        // Ignore clipboard restrictions
+      }
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
