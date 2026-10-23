@@ -485,15 +485,17 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
       dirLight.position.set(currPlanePos.x + 18, currPlanePos.y + 28, currPlanePos.z + 14);
       dirLight.target.position.copy(currPlanePos);
 
-      // Move camera & OrbitControls target smoothly with the aircraft
+      // Move camera & OrbitControls target smoothly with the aircraft ONLY when it actually translates
       deltaMove.subVectors(currPlanePos, prevPlanePos);
-      // Guard against world-wrap jump (> 100m in a single step)
-      if (deltaMove.lengthSq() < 10000) {
+      const moveSq = deltaMove.lengthSq();
+      if (moveSq > 1e-7 && moveSq < 10000) {
         camera.position.add(deltaMove);
+        controls.target.add(deltaMove);
+      } else if (moveSq >= 10000) {
+        // World-wrap jump (> 100m in a single step): preserve exact camera offset relative to target
+        const camOffset = camera.position.clone().sub(controls.target);
         controls.target.copy(currPlanePos);
-      } else {
-        controls.target.copy(currPlanePos);
-        camera.position.set(currPlanePos.x + 5.2, currPlanePos.y + 3.2, currPlanePos.z + 8.5);
+        camera.position.copy(currPlanePos).add(camOffset);
       }
 
       controls.update();
@@ -560,7 +562,7 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
 
     const dist = 9.2;
     const pos = flightStateRef.current;
-    const targetY = pos.y - 0.2;
+    const targetY = pos.y;
 
     switch (cameraPreset) {
       case 'isometric':

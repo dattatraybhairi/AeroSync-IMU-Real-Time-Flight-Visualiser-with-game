@@ -165,20 +165,36 @@ export function stepFlightPhysics(
   const maxForwardSpeed = 28.0 * boostMultiplier; // m/s
   const targetForwardSpeed = targetForwardCmd * maxForwardSpeed;
 
-  // Target left/right lateral velocity (m/s) from Joystick X + Roll bank contribution
-  const rollBankFactor = Math.sin(degreesToRadians(Math.max(-65, Math.min(65, imu.roll)))) * 0.35;
+  // Target left/right lateral velocity (m/s) strictly from Joystick X input
+  // (plus gentle roll bank assist ONLY when actively flying forward/backward outside a 5° roll deadzone)
+  const activeRollDeg = Math.abs(imu.roll) > 5.0 ? imu.roll : 0;
+  const isActivelyFlying = Math.abs(targetForwardSpeed) > 0.5 || Math.abs(prevState.forwardSpeed) > 0.5;
+  const rollBankFactor = isActivelyFlying
+    ? Math.sin(degreesToRadians(Math.max(-65, Math.min(65, activeRollDeg)))) * 0.25
+    : 0;
   const maxLateralSpeed = 18.0 * boostMultiplier;
-  const targetLateralSpeed = Math.max(-1, Math.min(1, effectiveJoyX + rollBankFactor * 0.4)) * maxLateralSpeed;
+  const targetLateralSpeed =
+    Math.max(-1, Math.min(1, effectiveJoyX + (Math.abs(effectiveJoyX) > 0.01 ? rollBankFactor * 0.3 : 0))) *
+    maxLateralSpeed;
 
   // Smooth exponential damping for responsive yet weighty flight feel
   const responseRate = 1 - Math.exp(-6.5 * clampedDt);
-  const forwardSpeed =
+  let forwardSpeed =
     prevState.forwardSpeed + (targetForwardSpeed - prevState.forwardSpeed) * responseRate;
-  const lateralSpeed =
+  let lateralSpeed =
     prevState.lateralSpeed + (targetLateralSpeed - prevState.lateralSpeed) * responseRate;
 
-  // Yaw steering from Joystick X + IMU Roll banking when moving
-  const turnRateDegPerSec = (effectiveJoyX * 48 + rollBankFactor * 28) * boostMultiplier;
+  // Snap tiny residual speeds to zero so the aircraft and camera come to a complete, rock-solid stop
+  if (Math.abs(targetForwardSpeed) < 0.01 && Math.abs(forwardSpeed) < 0.04) {
+    forwardSpeed = 0;
+  }
+  if (Math.abs(targetLateralSpeed) < 0.01 && Math.abs(lateralSpeed) < 0.04) {
+    lateralSpeed = 0;
+  }
+
+  // Yaw steering accumulator ONLY turns when Joystick X is actively deflected (prevents stationary IMU roll from spinning heading)
+  const turnRateDegPerSec =
+    Math.abs(effectiveJoyX) > 0.01 ? effectiveJoyX * 48 * boostMultiplier : 0;
   const newYawAccumulator = normalizeHeading360(
     prevState.yawAccumulator + turnRateDegPerSec * clampedDt
   );
@@ -196,10 +212,11 @@ export function stepFlightPhysics(
   const vx = fwdX * forwardSpeed + rightX * lateralSpeed;
   const vz = fwdZ * forwardSpeed + rightZ * lateralSpeed;
 
-  // Vertical climb/descent rate from Pitch angle + forward speed magnitude
-  const pitchRad = degreesToRadians(Math.max(-65, Math.min(65, imu.pitch)));
-  const speedMag = Math.max(8, Math.abs(forwardSpeed) + Math.abs(lateralSpeed) * 0.5);
-  const vy = Math.sin(pitchRad) * speedMag * 0.65;
+  // Vertical climb/descent rate from Pitch angle ONLY when the aircraft is actually moving forward/backward
+  const pitchDeadbanded = Math.abs(imu.pitch) > 2.5 ? imu.pitch : 0;
+  const pitchRad = degreesToRadians(Math.max(-65, Math.min(65, pitchDeadbanded)));
+  const activeSpeedMag = Math.abs(forwardSpeed) + Math.abs(lateralSpeed) * 0.35;
+  const vy = activeSpeedMag > 0.2 ? Math.sin(pitchRad) * activeSpeedMag * 0.65 : 0;
 
   let nextX = prevState.x + vx * clampedDt;
   let nextZ = prevState.z + vz * clampedDt;
@@ -241,19 +258,19 @@ export function stepFlightPhysics(
   const stepDist = Math.sqrt(vx * vx + vz * vz) * clampedDt;
 
   return {
-    x: Math.round(nextX * 100) / 100,
-    y: Math.round(nextY * 100) / 100,
-    z: Math.round(nextZ * 100) / 100,
-    vx: Math.round(vx * 100) / 100,
-    vy: Math.round(vy * 100) / 100,
-    vz: Math.round(vz * 100) / 100,
-    forwardSpeed: Math.round(forwardSpeed * 100) / 100,
-    lateralSpeed: Math.round(lateralSpeed * 100) / 100,
+    x: nextX,
+    y: nextY,
+    z: nextZ,
+    vx,
+    vy,
+    vz,
+    forwardSpeed,
+    lateralSpeed,
     airspeedKts,
     altitudeFt,
     groundAltitudeFt,
-    headingDeg: Math.round(headingDeg * 10) / 10,
-    yawAccumulator: Math.round(newYawAccumulator * 10) / 10,
+    headingDeg,
+    yawAccumulator: newYawAccumulator,
     ringsCollected,
     distanceTraveled: Math.round((prevState.distanceTraveled + stepDist) * 10) / 10,
   };

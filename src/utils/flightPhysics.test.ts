@@ -109,3 +109,36 @@ test('stepFlightPhysics collects waypoint rings when flying through them', () =>
   assert.equal(firstRing.collected, true);
   assert.equal(nextState.ringsCollected, 1);
 });
+
+test('stepFlightPhysics keeps aircraft and camera target 100% stationary when ESP32 rests on a desk with slight tilt and untouched joystick', () => {
+  const deskIMU: IMUData = {
+    pitch: 1.8, // slight desk tilt
+    roll: -2.4, // slight breadboard tilt
+    yaw: 42.0,
+    joyX: 0,
+    joyY: 0,
+    timestamp: Date.now(),
+  };
+
+  const remote: JoystickInput = {
+    joyX: 0,
+    joyY: 0,
+    autoCruise: false,
+    cruiseThrottle: 0.65,
+  };
+
+  let state = { ...INITIAL_FLIGHT_STATE };
+  const initialX = state.x;
+  const initialY = state.y;
+  const initialZ = state.z;
+
+  for (let i = 0; i < 120; i++) {
+    state = stepFlightPhysics(state, deskIMU, remote, 0.016);
+  }
+
+  assert.equal(state.x, initialX, 'X position must not drift when stationary');
+  assert.equal(state.y, initialY, 'Y altitude must not drift when stationary');
+  assert.equal(state.z, initialZ, 'Z position must not drift when stationary');
+  assert.equal(state.headingDeg, 42.0, 'Heading must not drift from roll tilt when stationary');
+});
+

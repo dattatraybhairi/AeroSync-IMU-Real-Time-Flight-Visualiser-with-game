@@ -40,7 +40,7 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
   invertRoll: false,
   invertYaw: false,
   axisMapping: 'default',
-  smoothingFactor: 0.2,
+  smoothingFactor: 0.35,
 };
 
 /**
@@ -67,26 +67,29 @@ export function normalizeHeading360(heading: number): number {
  * Automatically handles:
  * - Normalized floats in [-1.0, 1.0]
  * - Percentage values in [-100, 100]
- * - ESP32 12-bit ADC raw values in [0, 4095] (center ~2048)
+ * - ESP32 12-bit ADC raw values in [0, 4095] (center ~1850..2048)
  * - Arduino 10-bit ADC raw values in [0, 1023] (center ~512)
  */
-export function normalizeJoystickAxis(rawVal: number, deadzone: number = 0.06): number {
+export function normalizeJoystickAxis(rawVal: number, deadzone: number = 0.10): number {
   if (!Number.isFinite(rawVal)) return 0;
 
   let norm = rawVal;
+  let effectiveDeadzone = deadzone;
   if (rawVal > 1024 && rawVal <= 4096) {
-    // ESP32 12-bit ADC (0..4095, center 2048)
+    // ESP32 12-bit ADC (0..4095, center ~2048; wider 16% deadzone for ESP32 ADC non-linearity)
     norm = (rawVal - 2048) / 2048;
+    effectiveDeadzone = Math.max(deadzone, 0.16);
   } else if (rawVal > 100 && rawVal <= 1024) {
     // 10-bit ADC (0..1023, center 512)
     norm = (rawVal - 512) / 512;
+    effectiveDeadzone = Math.max(deadzone, 0.12);
   } else if (Math.abs(rawVal) > 1.5 && Math.abs(rawVal) <= 100) {
     // Percentage (-100..100)
     norm = rawVal / 100;
   }
 
   norm = Math.max(-1, Math.min(1, norm));
-  if (Math.abs(norm) < deadzone) return 0;
+  if (Math.abs(norm) < effectiveDeadzone) return 0;
   return Math.round(norm * 100) / 100;
 }
 
@@ -336,16 +339,23 @@ export function applyCalibration(
   roll = normalizeAngle180(roll);
   yaw = normalizeHeading360(yaw);
 
-  // 4. Low-pass filter (exponential moving average)
+  // 4. Low-pass filter (exponential moving average) + micro-jitter deadband stabilization
   if (previous && config.smoothingFactor > 0 && config.smoothingFactor < 1) {
     const alpha = 1 - config.smoothingFactor;
     let yawDiff = yaw - previous.yaw;
     if (yawDiff > 180) yawDiff -= 360;
     if (yawDiff < -180) yawDiff += 360;
 
-    pitch = previous.pitch + alpha * (pitch - previous.pitch);
-    roll = previous.roll + alpha * (roll - previous.roll);
-    yaw = normalizeHeading360(previous.yaw + alpha * yawDiff);
+    const pitchDiff = pitch - previous.pitch;
+    const rollDiff = roll - previous.roll;
+
+    // Suppress sub-degree thermal/ADC micro-jitter when hardware IMU is resting stationary
+    pitch = Math.abs(pitchDiff) < 0.15 ? previous.pitch : previous.pitch + alpha * pitchDiff;
+    roll = Math.abs(rollDiff) < 0.15 ? previous.roll : previous.roll + alpha * rollDiff;
+    yaw =
+      Math.abs(yawDiff) < 0.25
+        ? previous.yaw
+        : normalizeHeading360(previous.yaw + alpha * yawDiff);
   }
 
   return {

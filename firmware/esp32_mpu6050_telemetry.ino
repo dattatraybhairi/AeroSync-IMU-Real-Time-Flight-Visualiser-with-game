@@ -38,6 +38,7 @@ float accOffsetX = 0.0, accOffsetY = 0.0, accOffsetZ = 0.0;
 float gyroOffsetX = 0.0, gyroOffsetY = 0.0, gyroOffsetZ = 0.0;
 int joyCenterX = 2048;
 int joyCenterY = 2048;
+bool hasJoystickHardware = true;
 
 unsigned long prevTime = 0;
 const int CALIBRATION_SAMPLES = 250;
@@ -50,7 +51,7 @@ float normalizeAxis(int rawAdc, int center) {
     norm = -(float)(center - rawAdc) / (float)max(1, center);
   }
   norm = constrain(norm, -1.0, 1.0);
-  if (abs(norm) < 0.07) return 0.0; // Deadzone filter
+  if (abs(norm) < 0.12) return 0.0; // Deadzone filter
   return norm;
 }
 
@@ -59,6 +60,7 @@ void calibrateSensors() {
   float axSum = 0, aySum = 0, azSum = 0;
   float gxSum = 0, gySum = 0, gzSum = 0;
   long jxSum = 0, jySum = 0;
+  int jxMin = 4095, jxMax = 0;
 
   for (int i = 0; i < CALIBRATION_SAMPLES; i++) {
     sensors_event_t a, g, temp;
@@ -72,8 +74,12 @@ void calibrateSensors() {
     gySum += g.gyro.y;
     gzSum += g.gyro.z;
 
-    jxSum += analogRead(PIN_JOY_X);
-    jySum += analogRead(PIN_JOY_Y);
+    int rx = analogRead(PIN_JOY_X);
+    int ry = analogRead(PIN_JOY_Y);
+    jxSum += rx;
+    jySum += ry;
+    if (rx < jxMin) jxMin = rx;
+    if (rx > jxMax) jxMax = rx;
 
     delay(5);
   }
@@ -88,6 +94,11 @@ void calibrateSensors() {
 
   joyCenterX = jxSum / CALIBRATION_SAMPLES;
   joyCenterY = jySum / CALIBRATION_SAMPLES;
+
+  // Verify a real potentiometer is wired (center within 1000..3100 and stable at rest)
+  hasJoystickHardware = (joyCenterX > 1000 && joyCenterX < 3100 &&
+                         joyCenterY > 1000 && joyCenterY < 3100 &&
+                         (jxMax - jxMin) < 180);
 
   Serial.println("// Calibration complete. Streaming IMU + Joystick flight telemetry...");
 }
@@ -134,6 +145,11 @@ void loop() {
   float gy = (g.gyro.y - gyroOffsetY) * 180.0 / PI;
   float gz = (g.gyro.z - gyroOffsetZ) * 180.0 / PI;
 
+  // Gyroscope deadband to eliminate continuous stationary yaw/attitude drift
+  if (abs(gx) < 0.6) gx = 0.0;
+  if (abs(gy) < 0.6) gy = 0.0;
+  if (abs(gz) < 0.8) gz = 0.0;
+
   float accPitch = atan2(-ax, sqrt(ay * ay + az * az)) * 180.0 / PI;
   float accRoll  = atan2(ay, az) * 180.0 / PI;
 
@@ -142,13 +158,10 @@ void loop() {
   roll  = 0.97 * (roll  + gx * dt) + 0.03 * accRoll;
   yaw   += gz * dt;
 
-  // Read Dual-Axis Analog Joystick
-  float joyX = normalizeAxis(analogRead(PIN_JOY_X), joyCenterX);
-  float joyY = normalizeAxis(analogRead(PIN_JOY_Y), joyCenterY);
-  int joyBtn = (digitalRead(PIN_JOY_SW) == LOW) ? 1 : 0;
-
-  // Allow joystick X to also steer yaw smoothly
-  yaw += joyX * 45.0 * dt;
+  // Read Dual-Axis Analog Joystick (or 0.0 if floating/unconnected)
+  float joyX = hasJoystickHardware ? normalizeAxis(analogRead(PIN_JOY_X), joyCenterX) : 0.0;
+  float joyY = hasJoystickHardware ? normalizeAxis(analogRead(PIN_JOY_Y), joyCenterY) : 0.0;
+  int joyBtn = (hasJoystickHardware && digitalRead(PIN_JOY_SW) == LOW) ? 1 : 0;
 
   while (yaw >= 360.0) yaw -= 360.0;
   while (yaw < 0.0)    yaw += 360.0;

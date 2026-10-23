@@ -123,6 +123,37 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  const handleChangeSource = useCallback((nextSource: DataSourceType) => {
+    setCurrentSource(nextSource);
+    if (nextSource === 'webserial' || nextSource === 'websocket' || nextSource === 'device_imu') {
+      // Stop auto-cruise when connecting hardware ESP32 / Device IMU so aircraft & camera remain rock-solid until moved by joystick
+      setRemoteInput((prev) => ({
+        ...prev,
+        joyX: 0,
+        joyY: 0,
+        autoCruise: false,
+      }));
+      const zeroed: IMUData = {
+        pitch: 0,
+        roll: 0,
+        yaw: 0,
+        joyX: 0,
+        joyY: 0,
+        timestamp: Date.now(),
+      };
+      prevCalibratedRef.current = zeroed;
+      setRawIMU(zeroed);
+      setCalibratedIMU(zeroed);
+    } else if (nextSource === 'simulation') {
+      setRemoteInput((prev) => ({
+        ...prev,
+        joyX: 0,
+        joyY: 0,
+        autoCruise: true,
+      }));
+    }
+  }, []);
+
   const handleNavigateSection = (
     section: 'fleet' | 'device_imu' | 'serial' | 'calibration'
   ) => {
@@ -130,10 +161,10 @@ export default function App() {
     if (section === 'fleet') {
       setDockTab('aircraft');
     } else if (section === 'device_imu') {
-      setCurrentSource('device_imu');
+      handleChangeSource('device_imu');
       setDockTab('connection');
     } else if (section === 'serial') {
-      setCurrentSource('webserial');
+      handleChangeSource('webserial');
       setDockTab('connection');
     } else if (section === 'calibration') {
       setDockTab('calibration');
@@ -198,9 +229,9 @@ export default function App() {
           }`}
         >
           <div className="relative flex items-start gap-1">
-            <div className="flex flex-col gap-2 max-w-[260px]">
+            <div className="flex flex-col gap-2">
               {/* HUD Mode Switcher */}
-              <div className="flex items-center gap-1 p-0.5 bg-white/95 dark:bg-slate-900/95 border border-slate-200/90 dark:border-slate-800 rounded-lg shadow-xs text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+              <div className="flex items-center gap-1 p-0.5 bg-white/95 dark:bg-slate-900/95 border border-slate-200/90 dark:border-slate-800 rounded-lg shadow-xs text-[11px] font-semibold text-slate-600 dark:text-slate-400 self-start">
                 <button
                   type="button"
                   onClick={() => setHudView('remote')}
@@ -239,34 +270,42 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Custom ESP32 Flight Remote Controller (Joystick + Forward/Backward/Left/Right) */}
-              {hudView === 'remote' && (
-                <JoystickRemoteHUD
-                  remoteInput={remoteInput}
-                  onChangeRemote={setRemoteInput}
-                  flightState={flightState}
-                  totalRings={8}
-                  onResetFlight={handleResetFlight}
-                  showTerrain={showTerrain}
-                  onToggleTerrain={() => setShowTerrain((t) => !t)}
-                  espJoyX={calibratedIMU.joyX}
-                  espJoyY={calibratedIMU.joyY}
-                />
-              )}
+              <div className="flex flex-col lg:flex-row items-start gap-2">
+                {/* Custom ESP32 Flight Remote Controller (Joystick + Forward/Backward/Left/Right) */}
+                {hudView === 'remote' && (
+                  <div className="w-[260px]">
+                    <JoystickRemoteHUD
+                      remoteInput={remoteInput}
+                      onChangeRemote={setRemoteInput}
+                      flightState={flightState}
+                      totalRings={8}
+                      onResetFlight={handleResetFlight}
+                      showTerrain={showTerrain}
+                      onToggleTerrain={() => setShowTerrain((t) => !t)}
+                      espJoyX={calibratedIMU.joyX}
+                      espJoyY={calibratedIMU.joyY}
+                    />
+                  </div>
+                )}
 
-              {/* Primary Flight Display */}
-              {(hudView === 'pfd' || hudView === 'remote') && (
-                <PrimaryFlightDisplay imuData={calibratedIMU} />
-              )}
+                {/* Primary Flight Display */}
+                {(hudView === 'pfd' || hudView === 'remote') && (
+                  <div className="w-[250px]">
+                    <PrimaryFlightDisplay imuData={calibratedIMU} />
+                  </div>
+                )}
 
-              {/* Telemetry Scope */}
-              {hudView === 'scope' && (
-                <TelemetryScope
-                  imuData={calibratedIMU}
-                  packetRate={packetRate}
-                  darkMode={darkMode}
-                />
-              )}
+                {/* Telemetry Scope */}
+                {hudView === 'scope' && (
+                  <div className="w-[260px]">
+                    <TelemetryScope
+                      imuData={calibratedIMU}
+                      packetRate={packetRate}
+                      darkMode={darkMode}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Minimize / Expand Toggle */}
@@ -331,7 +370,7 @@ export default function App() {
           setShowTerrain={setShowTerrain}
           onResetFlight={handleResetFlight}
           currentSource={currentSource}
-          setCurrentSource={setCurrentSource}
+          setCurrentSource={handleChangeSource}
           onReceiveRawData={handleReceiveRawData}
           isSimulating={isSimulating}
           setIsSimulating={setIsSimulating}
