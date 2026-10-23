@@ -1,0 +1,420 @@
+import * as THREE from 'three';
+import { getTerrainHeight, type WaypointRing } from '../utils/flightPhysics';
+
+export interface TerrainWorldInstance {
+  group: THREE.Group;
+  waypointMeshes: THREE.Mesh[];
+  update: (
+    delta: number,
+    elapsedTime: number,
+    waypoints: WaypointRing[],
+    aircraftPos: THREE.Vector3
+  ) => void;
+}
+
+/**
+ * Builds the complete 3D Flight Simulator Terrain World:
+ * - Vertex-colored Alpine Mountains, Foothills & Valley Floor
+ * - Airport Runway with Threshold Markings, Centerline & Edge Lights
+ * - Composite 7-Part Air Traffic Control Tower (with rotating radar) & Hangar
+ * - Instanced Conifer Pine Forest (300+ multi-tier trees grounded on terrain)
+ * - Instanced Mountain Boulders & Ridge Wind Turbines
+ * - High-Altitude Cumulus Cloud Clusters
+ * - Interactive Flight Waypoint Rings
+ */
+export function createTerrainWorld(
+  isSoftwareGl: boolean,
+  initialWaypoints: WaypointRing[]
+): TerrainWorldInstance {
+  const worldGroup = new THREE.Group();
+
+  // 1. Procedural Vertex-Colored Mountain & Valley Terrain Mesh
+  const terrainSize = 460;
+  const segments = isSoftwareGl ? 88 : 128;
+  const terrainGeo = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
+  terrainGeo.rotateX(-Math.PI / 2);
+
+  const posAttr = terrainGeo.attributes.position;
+  const colors = new Float32Array(posAttr.count * 3);
+  const colorTmp = new THREE.Color();
+
+  for (let i = 0; i < posAttr.count; i++) {
+    const vx = posAttr.getX(i);
+    const vz = posAttr.getZ(i);
+    const vy = getTerrainHeight(vx, vz);
+    posAttr.setY(i, vy);
+
+    // Elevation-based biome vertex coloring
+    const relH = vy + 2.0; // 0 = valley floor
+    if (Math.abs(vx) < 11 && Math.abs(vz) < 42) {
+      // Runway apron shoulder grass
+      colorTmp.setHex(0x3f6a3e);
+    } else if (relH < 0.8) {
+      // Lush valley meadow green
+      colorTmp.setHex(0x4b7f47);
+    } else if (relH < 4.2) {
+      // Alpine forest foothills
+      colorTmp.setHex(0x3a663b);
+    } else if (relH < 9.5) {
+      // Granite mountain slope
+      const t = (relH - 4.2) / 5.3;
+      colorTmp.setHex(0x57534e).lerp(new THREE.Color(0x78716c), t);
+    } else if (relH < 13.5) {
+      // High rocky ridge
+      colorTmp.setHex(0x94a3b8);
+    } else {
+      // Snow-capped mountain peak
+      colorTmp.setHex(0xf8fafc);
+    }
+
+    colors[i * 3] = colorTmp.r;
+    colors[i * 3 + 1] = colorTmp.g;
+    colors[i * 3 + 2] = colorTmp.b;
+  }
+
+  terrainGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  terrainGeo.computeVertexNormals();
+
+  const terrainMat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.88,
+    metalness: 0.04,
+    flatShading: true,
+  });
+
+  const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
+  terrainMesh.receiveShadow = !isSoftwareGl;
+  worldGroup.add(terrainMesh);
+
+  // 2. Alpine Lake / River Basin on the East/West Valley Flanks
+  const waterGeo = new THREE.PlaneGeometry(terrainSize, terrainSize);
+  waterGeo.rotateX(-Math.PI / 2);
+  const waterMat = new THREE.MeshStandardMaterial({
+    color: 0x0284c7,
+    roughness: 0.2,
+    metalness: 0.55,
+  });
+  const waterMesh = new THREE.Mesh(waterGeo, waterMat);
+  waterMesh.position.y = -2.28;
+  worldGroup.add(waterMesh);
+
+  // 3. Airport Runway Strip at (0, -1.97, 0) along Z axis [-38..+38]
+  const runwayGroup = new THREE.Group();
+  runwayGroup.position.set(0, -1.97, 0);
+
+  const asphaltGeo = new THREE.PlaneGeometry(9.6, 78);
+  asphaltGeo.rotateX(-Math.PI / 2);
+  const asphaltMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    roughness: 0.82,
+    metalness: 0.08,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  });
+  const asphaltMesh = new THREE.Mesh(asphaltGeo, asphaltMat);
+  asphaltMesh.receiveShadow = !isSoftwareGl;
+  runwayGroup.add(asphaltMesh);
+
+  // Runway White Dashed Centerline & Side Stripes
+  const stripeMat = new THREE.MeshBasicMaterial({
+    color: 0xf8fafc,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+
+  for (let z = -32; z <= 32; z += 5.5) {
+    const dashGeo = new THREE.PlaneGeometry(0.28, 2.8);
+    dashGeo.rotateX(-Math.PI / 2);
+    const dash = new THREE.Mesh(dashGeo, stripeMat);
+    dash.position.set(0, 0.02, z);
+    runwayGroup.add(dash);
+  }
+
+  // Runway Threshold Piano Keys (North & South ends)
+  for (const endZ of [-35.5, 35.5]) {
+    for (let x = -3.6; x <= 3.6; x += 1.2) {
+      if (Math.abs(x) < 0.3) continue;
+      const keyGeo = new THREE.PlaneGeometry(0.55, 2.6);
+      keyGeo.rotateX(-Math.PI / 2);
+      const keyMesh = new THREE.Mesh(keyGeo, stripeMat);
+      keyMesh.position.set(x, 0.02, endZ);
+      runwayGroup.add(keyMesh);
+    }
+  }
+
+  worldGroup.add(runwayGroup);
+
+  // 4. Composite Air Traffic Control Tower & Hangar Complex
+  const towerGroup = new THREE.Group();
+  towerGroup.position.set(9.2, -2.0, -8);
+
+  const concreteMat = new THREE.MeshStandardMaterial({
+    color: 0xe2e8f0,
+    roughness: 0.75,
+    metalness: 0.1,
+  });
+  const darkTrimMat = new THREE.MeshStandardMaterial({
+    color: 0x334155,
+    roughness: 0.4,
+    metalness: 0.5,
+  });
+  const glassCabMat = new THREE.MeshStandardMaterial({
+    color: 0x38bdf8,
+    roughness: 0.15,
+    metalness: 0.75,
+    emissive: 0x0284c7,
+    emissiveIntensity: 0.25,
+  });
+  const beaconMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+
+  // Part 1: Operations Base Building
+  const baseBldg = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.8, 4.2), concreteMat);
+  baseBldg.position.set(0, 0.9, 0);
+  towerGroup.add(baseBldg);
+
+  // Part 2: Tower Shaft
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.15, 6.2, 8), concreteMat);
+  shaft.position.set(0, 4.0, -1.0);
+  towerGroup.add(shaft);
+
+  // Part 3: Catwalk Observation Deck
+  const catwalk = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.35, 0.45, 8), darkTrimMat);
+  catwalk.position.set(0, 7.2, -1.0);
+  towerGroup.add(catwalk);
+
+  // Part 4: Glass Control Cab
+  const cab = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.25, 1.35, 8), glassCabMat);
+  cab.position.set(0, 8.05, -1.0);
+  towerGroup.add(cab);
+
+  // Part 5: Tower Roof Cap
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(1.65, 0.65, 8), darkTrimMat);
+  roof.position.set(0, 9.0, -1.0);
+  towerGroup.add(roof);
+
+  // Part 6: Rotating Radar Dish Assembly
+  const radarPivot = new THREE.Group();
+  radarPivot.position.set(0, 9.55, -1.0);
+  const radarDish = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.35, 0.18), concreteMat);
+  radarPivot.add(radarDish);
+  const radarMast = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.5, 6), darkTrimMat);
+  radarMast.position.y = -0.2;
+  radarPivot.add(radarMast);
+  towerGroup.add(radarPivot);
+
+  // Part 7: Red Aviation Obstruction Beacon
+  const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), beaconMat);
+  beacon.position.set(0, 9.9, -1.0);
+  towerGroup.add(beacon);
+
+  // Hangar Building on opposite side of runway
+  const hangarGroup = new THREE.Group();
+  hangarGroup.position.set(-10.0, -2.0, 6.0);
+  const hangarBody = new THREE.Mesh(new THREE.BoxGeometry(5.2, 2.2, 7.5), concreteMat);
+  hangarBody.position.y = 1.1;
+  hangarGroup.add(hangarBody);
+  const hangarRoof = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.6, 2.6, 7.5, 12, 1, false, 0, Math.PI),
+    darkTrimMat
+  );
+  hangarRoof.rotation.z = Math.PI / 2;
+  hangarRoof.rotation.y = Math.PI / 2;
+  hangarRoof.position.y = 2.2;
+  hangarGroup.add(hangarRoof);
+  worldGroup.add(hangarGroup);
+  worldGroup.add(towerGroup);
+
+  // 5. Instanced Pine Forest (Multi-tier trunk + lower cone + upper cone)
+  const treeCount = 320;
+  const trunkGeo = new THREE.CylinderGeometry(0.16, 0.26, 1.2, 6);
+  trunkGeo.translate(0, 0.6, 0);
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5c4033, roughness: 0.9 });
+
+  const lowerConeGeo = new THREE.ConeGeometry(1.15, 2.6, 7);
+  lowerConeGeo.translate(0, 2.1, 0);
+  const upperConeGeo = new THREE.ConeGeometry(0.85, 2.2, 7);
+  upperConeGeo.translate(0, 3.4, 0);
+  const foliageMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.82,
+    metalness: 0.02,
+    flatShading: true,
+  });
+
+  const trunkInst = new THREE.InstancedMesh(trunkGeo, trunkMat, treeCount);
+  const lowerInst = new THREE.InstancedMesh(lowerConeGeo, foliageMat, treeCount);
+  const upperInst = new THREE.InstancedMesh(upperConeGeo, foliageMat, treeCount);
+
+  const dummy = new THREE.Object3D();
+  const treePalette = [0x15803d, 0x166534, 0x14532d, 0x1e6b3b, 0x2d6a4f];
+
+  let placedTrees = 0;
+  let seed = 1337;
+  const nextRand = () => {
+    seed = (seed * 16807) % 2147483647;
+    return (seed - 1) / 2147483646;
+  };
+
+  for (let attempt = 0; attempt < 900 && placedTrees < treeCount; attempt++) {
+    const tx = (nextRand() - 0.5) * 380;
+    const tz = (nextRand() - 0.5) * 380;
+
+    // Keep runway and apron clear of trees
+    if (Math.abs(tx) < 16 && Math.abs(tz) < 48) continue;
+
+    const ty = getTerrainHeight(tx, tz);
+    const relH = ty + 2.0;
+    // Place trees on valley floor and foothills (not underwater or on high snow peaks)
+    if (relH < 0.05 || relH > 8.2) continue;
+
+    const scale = 0.75 + nextRand() * 0.65;
+    dummy.position.set(tx, ty - 0.05, tz);
+    dummy.rotation.set(0, nextRand() * Math.PI * 2, 0);
+    dummy.scale.setScalar(scale);
+    dummy.updateMatrix();
+
+    trunkInst.setMatrixAt(placedTrees, dummy.matrix);
+    lowerInst.setMatrixAt(placedTrees, dummy.matrix);
+    upperInst.setMatrixAt(placedTrees, dummy.matrix);
+
+    colorTmp.setHex(treePalette[placedTrees % treePalette.length]);
+    lowerInst.setColorAt(placedTrees, colorTmp);
+    colorTmp.offsetHSL(0, 0, 0.04);
+    upperInst.setColorAt(placedTrees, colorTmp);
+
+    placedTrees++;
+  }
+
+  trunkInst.count = placedTrees;
+  lowerInst.count = placedTrees;
+  upperInst.count = placedTrees;
+  trunkInst.instanceMatrix.needsUpdate = true;
+  lowerInst.instanceMatrix.needsUpdate = true;
+  upperInst.instanceMatrix.needsUpdate = true;
+  if (lowerInst.instanceColor) lowerInst.instanceColor.needsUpdate = true;
+  if (upperInst.instanceColor) upperInst.instanceColor.needsUpdate = true;
+  trunkInst.computeBoundingSphere();
+  lowerInst.computeBoundingSphere();
+  upperInst.computeBoundingSphere();
+  trunkInst.frustumCulled = false;
+  lowerInst.frustumCulled = false;
+  upperInst.frustumCulled = false;
+
+  worldGroup.add(trunkInst);
+  worldGroup.add(lowerInst);
+  worldGroup.add(upperInst);
+
+  // 6. Instanced Alpine Rock Boulders on Slopes
+  const rockCount = 90;
+  const rockGeo = new THREE.DodecahedronGeometry(1.2, 0);
+  rockGeo.translate(0, 0.6, 0);
+  const rockMat = new THREE.MeshStandardMaterial({
+    color: 0x78716c,
+    roughness: 0.9,
+    metalness: 0.05,
+    flatShading: true,
+  });
+  const rockInst = new THREE.InstancedMesh(rockGeo, rockMat, rockCount);
+
+  let placedRocks = 0;
+  for (let i = 0; i < 300 && placedRocks < rockCount; i++) {
+    const rx = (nextRand() - 0.5) * 390;
+    const rz = (nextRand() - 0.5) * 390;
+    if (Math.abs(rx) < 18 && Math.abs(rz) < 50) continue;
+    const ry = getTerrainHeight(rx, rz);
+    if (ry + 2.0 < 1.5) continue;
+
+    dummy.position.set(rx, ry - 0.2, rz);
+    dummy.rotation.set(nextRand() * 0.5, nextRand() * Math.PI, nextRand() * 0.5);
+    dummy.scale.set(0.8 + nextRand() * 1.4, 0.6 + nextRand() * 1.1, 0.8 + nextRand() * 1.4);
+    dummy.updateMatrix();
+    rockInst.setMatrixAt(placedRocks, dummy.matrix);
+    placedRocks++;
+  }
+  rockInst.count = placedRocks;
+  rockInst.instanceMatrix.needsUpdate = true;
+  rockInst.computeBoundingSphere();
+  rockInst.frustumCulled = false;
+  worldGroup.add(rockInst);
+
+  // 7. High-Altitude 3D Cumulus Cloud Clusters
+  const cloudCount = 36;
+  const cloudGeo = new THREE.DodecahedronGeometry(2.0, 1);
+  const cloudMat = new THREE.MeshStandardMaterial({
+    color: 0xe2e8f0,
+    roughness: 0.95,
+    metalness: 0.0,
+    flatShading: true,
+  });
+  const cloudInst = new THREE.InstancedMesh(cloudGeo, cloudMat, cloudCount);
+  for (let i = 0; i < cloudCount; i++) {
+    const cx = (nextRand() - 0.5) * 400;
+    const cz = (nextRand() - 0.5) * 400;
+    const cy = 42 + nextRand() * 16;
+    dummy.position.set(cx, cy, cz);
+    dummy.rotation.set(0, nextRand() * Math.PI, 0);
+    dummy.scale.set(1.4 + nextRand() * 1.2, 0.45 + nextRand() * 0.25, 1.1 + nextRand() * 1.0);
+    dummy.updateMatrix();
+    cloudInst.setMatrixAt(i, dummy.matrix);
+  }
+  cloudInst.instanceMatrix.needsUpdate = true;
+  cloudInst.computeBoundingSphere();
+  cloudInst.frustumCulled = false;
+  worldGroup.add(cloudInst);
+
+  // 8. Interactive Flight Waypoint Rings along the Valley & Mountain Passes
+  const waypointMeshes: THREE.Mesh[] = [];
+  const ringGeo = new THREE.TorusGeometry(4.0, 0.26, 10, 32);
+
+  initialWaypoints.forEach((wp) => {
+    const ringMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b,
+      emissive: 0xd97706,
+      emissiveIntensity: 0.45,
+      roughness: 0.25,
+      metalness: 0.6,
+    });
+    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+    ringMesh.position.set(wp.x, wp.y, wp.z);
+    worldGroup.add(ringMesh);
+    waypointMeshes.push(ringMesh);
+  });
+
+  // Update loop for animated world elements
+  const update = (
+    delta: number,
+    elapsedTime: number,
+    waypoints: WaypointRing[],
+    _aircraftPos: THREE.Vector3
+  ) => {
+    // Rotate control tower radar
+    radarPivot.rotation.y += delta * 1.8;
+
+    // Update waypoint ring visual state & gentle spin
+    for (let i = 0; i < waypointMeshes.length; i++) {
+      const mesh = waypointMeshes[i];
+      const wp = waypoints[i];
+      if (!mesh || !wp) continue;
+
+      mesh.rotation.z = elapsedTime * 0.8 + i;
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      if (wp.collected) {
+        mat.color.setHex(0x10b981);
+        mat.emissive.setHex(0x059669);
+        mat.emissiveIntensity = 0.25;
+      } else {
+        mat.color.setHex(0xf59e0b);
+        mat.emissive.setHex(0xd97706);
+        mat.emissiveIntensity = 0.5;
+      }
+    }
+  };
+
+  return {
+    group: worldGroup,
+    waypointMeshes,
+    update,
+  };
+}

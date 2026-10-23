@@ -1,0 +1,8 @@
+{
+  "name": "AeroSync IMU Real-Time Flight Visualiser with game",
+  "description": "Synchronized multi-aircraft 3D flight orientation visualizer for ESP32 IMU sensors via WebSerial, WebSocket Python bridge, or live simulation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
