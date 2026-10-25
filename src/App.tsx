@@ -4,6 +4,7 @@ import {
   AeroViewport,
   type AircraftType,
   type CameraPreset,
+  type TerrainMode,
 } from './components/AeroViewport';
 import { AIRCRAFT_CATALOG } from './three/aircraftModels';
 import { PrimaryFlightDisplay } from './components/PrimaryFlightDisplay';
@@ -70,13 +71,17 @@ export default function App() {
 
   const [calibratedIMU, setCalibratedIMU] = useState<IMUData>(prevCalibratedRef.current);
 
-  // Custom Flight Remote (Joystick + Cruise Thrust) state
+  // Custom Flight Remote (Joystick + Cruise Thrust + Swapped & Reversed VRx/VRy + Sideways Glide)
   const [remoteInput, setRemoteInput] = useState<JoystickInput>({
     joyX: 0,
     joyY: 0,
     autoCruise: true,
     cruiseThrottle: 0.65,
     boost: false,
+    swapVRxVRy: true,
+    reverseX: true,
+    reverseY: true,
+    turnOnSideways: false,
   });
 
   const [flightState, setFlightState] = useState<FlightPositionState>(INITIAL_FLIGHT_STATE);
@@ -86,12 +91,12 @@ export default function App() {
   const [currentSource, setCurrentSource] = useState<DataSourceType>('simulation');
   const [isSimulating, setIsSimulating] = useState<boolean>(true);
 
-  // Single Active Aircraft, Terrain & Camera states
+  // Single Active Aircraft, Terrain Mode ('mountains' | 'clouds_only' | 'off') & Camera states
   const [selectedAircraft, setSelectedAircraft] = useState<AircraftType>('airbus_a350');
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>('chase');
   const [showAxes, setShowAxes] = useState<boolean>(false);
   const [showGrid, setShowGrid] = useState<boolean>(false);
-  const [showTerrain, setShowTerrain] = useState<boolean>(true);
+  const [terrainMode, setTerrainMode] = useState<TerrainMode>('mountains');
 
   // HUD & Dock states
   const [hudView, setHudView] = useState<'remote' | 'pfd' | 'scope'>('remote');
@@ -215,7 +220,7 @@ export default function App() {
           cameraPreset={cameraPreset}
           showAxes={showAxes}
           showGrid={showGrid}
-          showTerrain={showTerrain}
+          terrainMode={terrainMode}
           darkMode={darkMode}
           remoteInput={remoteInput}
           resetCounter={resetCounter}
@@ -273,15 +278,15 @@ export default function App() {
               <div className="flex flex-col lg:flex-row items-start gap-2">
                 {/* Custom ESP32 Flight Remote Controller (Joystick + Forward/Backward/Left/Right) */}
                 {hudView === 'remote' && (
-                  <div className="w-[260px]">
+                  <div className="w-[264px]">
                     <JoystickRemoteHUD
                       remoteInput={remoteInput}
                       onChangeRemote={setRemoteInput}
                       flightState={flightState}
                       totalRings={8}
                       onResetFlight={handleResetFlight}
-                      showTerrain={showTerrain}
-                      onToggleTerrain={() => setShowTerrain((t) => !t)}
+                      terrainMode={terrainMode}
+                      onChangeTerrainMode={setTerrainMode}
                       espJoyX={calibratedIMU.joyX}
                       espJoyY={calibratedIMU.joyY}
                     />
@@ -366,8 +371,8 @@ export default function App() {
           setShowAxes={setShowAxes}
           showGrid={showGrid}
           setShowGrid={setShowGrid}
-          showTerrain={showTerrain}
-          setShowTerrain={setShowTerrain}
+          terrainMode={terrainMode}
+          setTerrainMode={setTerrainMode}
           onResetFlight={handleResetFlight}
           currentSource={currentSource}
           setCurrentSource={handleChangeSource}

@@ -17,14 +17,16 @@ import { degreesToRadians, type IMUData } from '../utils/imuMath';
 import {
   stepFlightPhysics,
   getTerrainHeight,
+  mapHardwareJoystick,
   INITIAL_FLIGHT_STATE,
   createInitialWaypoints,
   type FlightPositionState,
   type JoystickInput,
   type WaypointRing,
+  type TerrainMode,
 } from '../utils/flightPhysics';
 
-export type { AircraftType };
+export type { AircraftType, TerrainMode };
 export type CameraPreset = 'isometric' | 'chase' | 'cockpit_front' | 'wing_view' | 'top' | 'side';
 
 interface AeroViewportProps {
@@ -33,7 +35,7 @@ interface AeroViewportProps {
   cameraPreset: CameraPreset;
   showAxes: boolean;
   showGrid: boolean;
-  showTerrain: boolean;
+  terrainMode: TerrainMode;
   darkMode?: boolean;
   remoteInput: JoystickInput;
   resetCounter: number;
@@ -46,7 +48,7 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
   cameraPreset,
   showAxes,
   showGrid,
-  showTerrain,
+  terrainMode,
   darkMode = false,
   remoteInput,
   resetCounter,
@@ -65,8 +67,8 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
   const gridRef = useRef(showGrid);
   gridRef.current = showGrid;
 
-  const terrainVisibleRef = useRef(showTerrain);
-  terrainVisibleRef.current = showTerrain;
+  const terrainModeRef = useRef<TerrainMode>(terrainMode);
+  terrainModeRef.current = terrainMode;
 
   const remoteRef = useRef(remoteInput);
   remoteRef.current = remoteInput;
@@ -211,9 +213,9 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
     rimLight.position.set(-14, 10, -14);
     scene.add(rimLight);
 
-    // 7. Procedural 3D Terrain World (Mountains, Pine Forest, Runway, Control Tower, Clouds, Waypoint Rings)
+    // 7. Procedural 3D Terrain World (Mountains & Trees OR Clouds-Only Sky Deck)
     const terrainWorld = createTerrainWorld(isSoftwareGl, waypointsRef.current);
-    terrainWorld.group.visible = terrainVisibleRef.current;
+    terrainWorld.group.visible = terrainModeRef.current !== 'off';
     scene.add(terrainWorld.group);
     terrainWorldRef.current = terrainWorld;
 
@@ -404,8 +406,9 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
       };
 
       const { pitch, roll } = imuRef.current;
+      const currentTerrainMode = terrainModeRef.current;
 
-      // Step 3D flight position physics (forward, backward, left, right, altitude)
+      // Step 3D flight position physics (forward, backward, sideways left/right, altitude)
       prevPlanePos.set(
         flightStateRef.current.x,
         flightStateRef.current.y,
@@ -416,15 +419,22 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
         imuRef.current,
         effectiveRemote,
         delta,
-        waypointsRef.current
+        waypointsRef.current,
+        currentTerrainMode
       );
       flightStateRef.current = nextFlight;
       currPlanePos.set(nextFlight.x, nextFlight.y, nextFlight.z);
 
       // Compute visual bank roll & dynamic heading
+      const mappedHw = mapHardwareJoystick(imuRef.current, effectiveRemote);
+      const sidewaysStick =
+        Math.abs(effectiveRemote.joyX) >= Math.abs(mappedHw.joyX)
+          ? effectiveRemote.joyX
+          : mappedHw.joyX;
+
       const visualRoll = Math.max(
         -85,
-        Math.min(85, roll + effectiveRemote.joyX * 26)
+        Math.min(85, roll + sidewaysStick * 18)
       );
       const pRad = degreesToRadians(pitch);
       const rRad = degreesToRadians(visualRoll);
@@ -437,19 +447,16 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
       const currentSelected = selectedRef.current;
       const showAx = axesRef.current;
       const showGr = gridRef.current;
-      const showTerr = terrainVisibleRef.current;
       const isDark = darkModeRef.current;
 
       if (terrainWorldRef.current) {
-        terrainWorldRef.current.group.visible = showTerr;
-        if (showTerr) {
-          terrainWorldRef.current.update(
-            delta,
-            totalElapsed,
-            waypointsRef.current,
-            currPlanePos
-          );
-        }
+        terrainWorldRef.current.update(
+          delta,
+          totalElapsed,
+          waypointsRef.current,
+          currPlanePos,
+          currentTerrainMode
+        );
       }
 
       if (gridLightRef.current) gridLightRef.current.visible = showGr && !isDark;
@@ -475,11 +482,14 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
         axesGroupRef.current.quaternion.slerp(targetQuat, slerpFactor);
       }
 
-      // Ground contact shadow disc directly below aircraft on terrain
-      const groundY = getTerrainHeight(currPlanePos.x, currPlanePos.z);
-      shadowDisc.position.set(currPlanePos.x, groundY + 0.05, currPlanePos.z);
-      const altAboveGround = Math.max(0, currPlanePos.y - groundY);
-      shadowDiscMat.opacity = Math.max(0.06, 0.32 - altAboveGround * 0.01);
+      // Ground contact shadow disc directly below aircraft on mountain terrain only
+      shadowDisc.visible = currentTerrainMode === 'mountains';
+      if (currentTerrainMode === 'mountains') {
+        const groundY = getTerrainHeight(currPlanePos.x, currPlanePos.z);
+        shadowDisc.position.set(currPlanePos.x, groundY + 0.05, currPlanePos.z);
+        const altAboveGround = Math.max(0, currPlanePos.y - groundY);
+        shadowDiscMat.opacity = Math.max(0.06, 0.32 - altAboveGround * 0.01);
+      }
 
       // Keep sun shadow frustum centered on aircraft
       dirLight.position.set(currPlanePos.x + 18, currPlanePos.y + 28, currPlanePos.z + 14);

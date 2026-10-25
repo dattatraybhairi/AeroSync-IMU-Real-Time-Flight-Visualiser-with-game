@@ -142,3 +142,33 @@ test('stepFlightPhysics keeps aircraft and camera target 100% stationary when ES
   assert.equal(state.headingDeg, 42.0, 'Heading must not drift from roll tilt when stationary');
 });
 
+test('stepFlightPhysics moves sideways without turning heading left when turnOnSideways is false, and swaps/reverses VRx and VRy', () => {
+  const hwIMU: IMUData = {
+    pitch: 0,
+    roll: 0,
+    yaw: 0,
+    joyX: -0.8, // Raw VRx (will be swapped to Y and reversed to +0.8 forward)
+    joyY: -0.6, // Raw VRy (will be swapped to X and reversed to +0.6 right sideways)
+    timestamp: Date.now(),
+  };
+
+  const remote: JoystickInput = {
+    joyX: 0,
+    joyY: 0,
+    autoCruise: false,
+    cruiseThrottle: 0,
+    swapVRxVRy: true,
+    reverseX: true,
+    reverseY: true,
+    turnOnSideways: false,
+  };
+
+  let state = { ...INITIAL_FLIGHT_STATE, x: 0, y: 10, z: 0 };
+  state = stepFlightPhysics(state, hwIMU, remote, 0.05, undefined, 'clouds_only');
+
+  assert.ok(state.x > 0, `Expected aircraft to move sideways right (+X), got x=${state.x}`);
+  assert.ok(state.z < 0, `Expected aircraft to move forward (-Z), got z=${state.z}`);
+  assert.equal(state.headingDeg, 0, 'Aircraft heading must stay at 0° instead of turning left when moving sideways');
+});
+
+

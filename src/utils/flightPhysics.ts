@@ -5,12 +5,46 @@
 
 import { degreesToRadians, normalizeHeading360, type IMUData } from './imuMath';
 
+export type TerrainMode = 'mountains' | 'clouds_only' | 'off';
+
 export interface JoystickInput {
-  joyX: number; // [-1, 1] Left (-1) / Right (+1) movement & steering
+  joyX: number; // [-1, 1] Left (-1) / Right (+1) sideways movement
   joyY: number; // [-1, 1] Backward (-1) / Forward (+1) thrust & speed
   boost?: boolean;
   cruiseThrottle: number; // [0, 1] baseline cruise thrust when autoCruise is active
   autoCruise: boolean;
+  swapVRxVRy?: boolean; // Swap hardware ESP32 VRx and VRy channels (default: true)
+  reverseX?: boolean;   // Reverse hardware joystick X direction (default: true)
+  reverseY?: boolean;   // Reverse hardware joystick Y direction (default: true)
+  turnOnSideways?: boolean; // If false (default), moving joystick sideways moves aircraft sideways instead of turning
+}
+
+/**
+ * Maps incoming ESP32 hardware joystick axes (VRx, VRy) with configurable VRx/VRy swap and axis reversal.
+ */
+export function mapHardwareJoystick(
+  imu: IMUData,
+  remote: Pick<JoystickInput, 'swapVRxVRy' | 'reverseX' | 'reverseY'>
+): { hwJoyX?: number; hwJoyY?: number } {
+  if (imu.joyX === undefined && imu.joyY === undefined) {
+    return { hwJoyX: undefined, hwJoyY: undefined };
+  }
+  const rawX = imu.joyX ?? 0;
+  const rawY = imu.joyY ?? 0;
+  const swap = remote.swapVRxVRy ?? false;
+  const revX = remote.reverseX ?? false;
+  const revY = remote.reverseY ?? false;
+
+  let mappedX = swap ? rawY : rawX;
+  let mappedY = swap ? rawX : rawY;
+
+  if (revX && mappedX !== 0) mappedX = -mappedX;
+  if (revY && mappedY !== 0) mappedY = -mappedY;
+
+  return {
+    hwJoyX: mappedX,
+    hwJoyY: mappedY,
+  };
 }
 
 export interface FlightPositionState {
@@ -25,8 +59,8 @@ export interface FlightPositionState {
   airspeedKts: number;  // Indicated airspeed in knots
   altitudeFt: number;   // Altitude in feet
   groundAltitudeFt: number; // Ground elevation below aircraft in feet
-  headingDeg: number;   // Dynamic heading combining IMU yaw + joystick steering [0, 360)
-  yawAccumulator: number; // Accumulated yaw offset from joystick X steering
+  headingDeg: number;   // Dynamic heading combining IMU yaw + optional steering [0, 360)
+  yawAccumulator: number; // Accumulated yaw offset
   ringsCollected: number;
   distanceTraveled: number;
 }
@@ -125,32 +159,35 @@ export function createInitialWaypoints(): WaypointRing[] {
 /**
  * Advances aircraft 3D world position and velocities by dt seconds based on:
  * - IMU orientation (pitch, roll, yaw)
- * - Joystick / Custom Remote input (joyX = left/right, joyY = forward/backward, boost, autoCruise)
+ * - Joystick / Custom Remote input (joyX = left/right sideways movement, joyY = forward/backward thrust)
  *
  * Ensures:
  * - Pushing Joystick Forward (joyY > 0) moves the plane forward along its heading.
  * - Pulling Joystick Backward (joyY < 0) moves the plane backward (reverse thrust / backing up).
- * - Moving Joystick Left/Right (joyX < 0 or joyX > 0) moves the plane left/right (lateral strafe + turn).
- * - Tilting IMU Pitch up/down climbs or descends in altitude, with terrain floor collision guard.
+ * - Moving Joystick Sideways (joyX < 0 or joyX > 0) moves the plane purely sideways Left/Right (without spinning yaw left),
+ *   unless turnOnSideways is explicitly enabled.
  */
 export function stepFlightPhysics(
   prevState: FlightPositionState,
   imu: IMUData,
   remote: JoystickInput,
   dt: number,
-  waypoints?: WaypointRing[]
+  waypoints?: WaypointRing[],
+  terrainMode: TerrainMode = 'mountains'
 ): FlightPositionState {
   const clampedDt = Math.min(Math.max(dt, 0.001), 0.1);
 
-  // Combine hardware IMU joystick telemetry (if present) with UI/Keyboard remote joystick
+  const { hwJoyX, hwJoyY } = mapHardwareJoystick(imu, remote);
+
+  // Combine mapped hardware IMU joystick telemetry (if present) with UI/Keyboard remote joystick
   const effectiveJoyX =
-    imu.joyX !== undefined && Math.abs(imu.joyX) > Math.abs(remote.joyX)
-      ? imu.joyX
+    hwJoyX !== undefined && Math.abs(hwJoyX) > Math.abs(remote.joyX)
+      ? hwJoyX
       : remote.joyX;
 
   const effectiveJoyY =
-    imu.joyY !== undefined && Math.abs(imu.joyY) > Math.abs(remote.joyY)
-      ? imu.joyY
+    hwJoyY !== undefined && Math.abs(hwJoyY) > Math.abs(remote.joyY)
+      ? hwJoyY
       : remote.joyY;
 
   const boostMultiplier = remote.boost || imu.joyBtn ? 1.65 : 1.0;
@@ -165,19 +202,11 @@ export function stepFlightPhysics(
   const maxForwardSpeed = 28.0 * boostMultiplier; // m/s
   const targetForwardSpeed = targetForwardCmd * maxForwardSpeed;
 
-  // Target left/right lateral velocity (m/s) strictly from Joystick X input
-  // (plus gentle roll bank assist ONLY when actively flying forward/backward outside a 5° roll deadzone)
-  const activeRollDeg = Math.abs(imu.roll) > 5.0 ? imu.roll : 0;
-  const isActivelyFlying = Math.abs(targetForwardSpeed) > 0.5 || Math.abs(prevState.forwardSpeed) > 0.5;
-  const rollBankFactor = isActivelyFlying
-    ? Math.sin(degreesToRadians(Math.max(-65, Math.min(65, activeRollDeg)))) * 0.25
-    : 0;
-  const maxLateralSpeed = 18.0 * boostMultiplier;
-  const targetLateralSpeed =
-    Math.max(-1, Math.min(1, effectiveJoyX + (Math.abs(effectiveJoyX) > 0.01 ? rollBankFactor * 0.3 : 0))) *
-    maxLateralSpeed;
+  // Target left/right sideways velocity (m/s) directly from Joystick X input
+  const maxLateralSpeed = 22.0 * boostMultiplier;
+  const targetLateralSpeed = Math.max(-1, Math.min(1, effectiveJoyX)) * maxLateralSpeed;
 
-  // Smooth exponential damping for responsive yet weighty flight feel
+  // Smooth exponential damping for responsive flight feel
   const responseRate = 1 - Math.exp(-6.5 * clampedDt);
   let forwardSpeed =
     prevState.forwardSpeed + (targetForwardSpeed - prevState.forwardSpeed) * responseRate;
@@ -192,27 +221,29 @@ export function stepFlightPhysics(
     lateralSpeed = 0;
   }
 
-  // Yaw steering accumulator ONLY turns when Joystick X is actively deflected (prevents stationary IMU roll from spinning heading)
+  // By default (turnOnSideways = false), sideways joystick moves the aircraft sideways instead of turning left/right
   const turnRateDegPerSec =
-    Math.abs(effectiveJoyX) > 0.01 ? effectiveJoyX * 48 * boostMultiplier : 0;
+    remote.turnOnSideways && Math.abs(effectiveJoyX) > 0.01
+      ? effectiveJoyX * 48 * boostMultiplier
+      : 0;
   const newYawAccumulator = normalizeHeading360(
     prevState.yawAccumulator + turnRateDegPerSec * clampedDt
   );
   const headingDeg = normalizeHeading360(imu.yaw + newYawAccumulator);
   const headingRad = degreesToRadians(headingDeg);
 
-  // In Three.js aeronautical coordinates:
-  // Heading 0° (North) points along -Z: forward = (-sin(hdg), 0, -cos(hdg))
-  // Right wing (East at 0° hdg) points along +X: right = (cos(hdg), 0, -sin(hdg))
-  const fwdX = -Math.sin(headingRad);
+  // In Three.js aeronautical coordinates (matching euler.set(pRad, -yRad, -rRad, 'YXZ')):
+  // Heading 0° (North) points along -Z: forward = (+sin(hdg), 0, -cos(hdg))
+  // Right wing (East at 0° hdg) points along +X: right = (+cos(hdg), 0, +sin(hdg))
+  const fwdX = Math.sin(headingRad);
   const fwdZ = -Math.cos(headingRad);
   const rightX = Math.cos(headingRad);
-  const rightZ = -Math.sin(headingRad);
+  const rightZ = Math.sin(headingRad);
 
   const vx = fwdX * forwardSpeed + rightX * lateralSpeed;
   const vz = fwdZ * forwardSpeed + rightZ * lateralSpeed;
 
-  // Vertical climb/descent rate from Pitch angle ONLY when the aircraft is actually moving forward/backward
+  // Vertical climb/descent rate from Pitch angle ONLY when the aircraft is actually moving
   const pitchDeadbanded = Math.abs(imu.pitch) > 2.5 ? imu.pitch : 0;
   const pitchRad = degreesToRadians(Math.max(-65, Math.min(65, pitchDeadbanded)));
   const activeSpeedMag = Math.abs(forwardSpeed) + Math.abs(lateralSpeed) * 0.35;
@@ -228,10 +259,10 @@ export function stepFlightPhysics(
   if (nextZ > WORLD_BOUNDS) nextZ -= WORLD_BOUNDS * 2;
   if (nextZ < -WORLD_BOUNDS) nextZ += WORLD_BOUNDS * 2;
 
-  // Terrain collision floor & ceiling clamp so aircraft never clips underground
-  const groundY = getTerrainHeight(nextX, nextZ);
-  const minClearanceY = groundY + 1.8;
-  const maxCeilingY = 58.0;
+  // Terrain collision floor & ceiling clamp
+  const groundY = terrainMode === 'mountains' ? getTerrainHeight(nextX, nextZ) : -28.0;
+  const minClearanceY = terrainMode === 'mountains' ? groundY + 1.8 : -24.0;
+  const maxCeilingY = 62.0;
   nextY = Math.max(minClearanceY, Math.min(maxCeilingY, nextY));
 
   // Waypoint ring collection check
@@ -254,7 +285,8 @@ export function stepFlightPhysics(
   const totalSpeedMs = Math.sqrt(vx * vx + vy * vy + vz * vz);
   const airspeedKts = Math.round(totalSpeedMs * 6.5); // Scaled knots for flight sim feel
   const altitudeFt = Math.round((nextY + 2.0) * 32.8);
-  const groundAltitudeFt = Math.max(0, Math.round((groundY + 2.0) * 32.8));
+  const groundAltitudeFt =
+    terrainMode === 'mountains' ? Math.max(0, Math.round((groundY + 2.0) * 32.8)) : 0;
   const stepDist = Math.sqrt(vx * vx + vz * vz) * clampedDt;
 
   return {

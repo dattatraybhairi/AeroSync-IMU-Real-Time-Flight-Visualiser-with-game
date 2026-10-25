@@ -8,9 +8,10 @@ import {
   Crosshair,
   Grid,
   Mountain,
+  Cloud,
   RotateCcw,
 } from 'lucide-react';
-import { type AircraftType, type CameraPreset } from './AeroViewport';
+import { type AircraftType, type CameraPreset, type TerrainMode } from './AeroViewport';
 import { AIRCRAFT_CATALOG } from '../three/aircraftModels';
 import { ConnectionManager, type DataSourceType } from './ConnectionManager';
 import { CalibrationPanel } from './CalibrationPanel';
@@ -25,8 +26,8 @@ interface ControlDockProps {
   setShowAxes: (show: boolean) => void;
   showGrid: boolean;
   setShowGrid: (show: boolean) => void;
-  showTerrain: boolean;
-  setShowTerrain: (show: boolean) => void;
+  terrainMode: TerrainMode;
+  setTerrainMode: (mode: TerrainMode) => void;
   onResetFlight: () => void;
   currentSource: DataSourceType;
   setCurrentSource: (source: DataSourceType) => void;
@@ -49,8 +50,8 @@ export const ControlDock: React.FC<ControlDockProps> = ({
   setShowAxes,
   showGrid,
   setShowGrid,
-  showTerrain,
-  setShowTerrain,
+  terrainMode,
+  setTerrainMode,
   onResetFlight,
   currentSource,
   setCurrentSource,
@@ -150,7 +151,7 @@ export const ControlDock: React.FC<ControlDockProps> = ({
           </div>
         </div>
 
-        {/* Tab 1: Single Active Aircraft Selector, Terrain Toggle & Camera Views */}
+        {/* Tab 1: Single Active Aircraft Selector, Terrain Mode & Camera Views */}
         {activeTab === 'aircraft' && (
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
             {/* Airbus & Boeing Single-Active Aircraft Selector */}
@@ -194,7 +195,7 @@ export const ControlDock: React.FC<ControlDockProps> = ({
               </div>
             </div>
 
-            {/* Camera Presets, 3D Terrain World & Gimbal Toggles */}
+            {/* Camera Presets, 3D Terrain World (Mountains / Clouds Only / Off) & Gimbal Toggles */}
             <div className="md:col-span-5 flex flex-col justify-between gap-2 bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700/80">
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between">
@@ -235,39 +236,70 @@ export const ControlDock: React.FC<ControlDockProps> = ({
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-300">
-                <label className="flex items-center gap-1 cursor-pointer font-semibold text-emerald-700 dark:text-emerald-400">
-                  <input
-                    type="checkbox"
-                    checked={showTerrain}
-                    onChange={(e) => setShowTerrain(e.target.checked)}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <Mountain className="w-3.5 h-3.5" />
-                  <span>Mountains & Trees</span>
-                </label>
+              <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-300">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setTerrainMode('mountains')}
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded font-semibold cursor-pointer transition-colors ${
+                      terrainMode === 'mountains'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    <Mountain className="w-3 h-3" />
+                    <span>Mountains</span>
+                  </button>
 
-                <label className="flex items-center gap-1 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showAxes}
-                    onChange={(e) => setShowAxes(e.target.checked)}
-                    className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
-                  />
-                  <Crosshair className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
-                  <span>Gimbal</span>
-                </label>
+                  <button
+                    type="button"
+                    onClick={() => setTerrainMode('clouds_only')}
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded font-semibold cursor-pointer transition-colors ${
+                      terrainMode === 'clouds_only'
+                        ? 'bg-sky-600 text-white'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    <Cloud className="w-3 h-3" />
+                    <span>Clouds Only</span>
+                  </button>
 
-                <label className="flex items-center gap-1 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showGrid}
-                    onChange={(e) => setShowGrid(e.target.checked)}
-                    className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
-                  />
-                  <Grid className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
-                  <span>Grid</span>
-                </label>
+                  <button
+                    type="button"
+                    onClick={() => setTerrainMode('off')}
+                    className={`px-1.5 py-0.5 rounded font-semibold cursor-pointer transition-colors ${
+                      terrainMode === 'off'
+                        ? 'bg-slate-700 text-white'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    <span>Off</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={showAxes}
+                      onChange={(e) => setShowAxes(e.target.checked)}
+                      className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                    />
+                    <Crosshair className="w-3 h-3 text-slate-500 dark:text-slate-400" />
+                    <span>Gimbal</span>
+                  </label>
+
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={showGrid}
+                      onChange={(e) => setShowGrid(e.target.checked)}
+                      className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                    />
+                    <Grid className="w-3 h-3 text-slate-500 dark:text-slate-400" />
+                    <span>Grid</span>
+                  </label>
+                </div>
               </div>
             </div>
           </div>

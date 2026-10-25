@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getTerrainHeight, type WaypointRing } from '../utils/flightPhysics';
+import { getTerrainHeight, type TerrainMode, type WaypointRing } from '../utils/flightPhysics';
 
 export interface TerrainWorldInstance {
   group: THREE.Group;
@@ -8,25 +8,27 @@ export interface TerrainWorldInstance {
     delta: number,
     elapsedTime: number,
     waypoints: WaypointRing[],
-    aircraftPos: THREE.Vector3
+    aircraftPos: THREE.Vector3,
+    terrainMode?: TerrainMode
   ) => void;
 }
 
 /**
  * Builds the complete 3D Flight Simulator Terrain World:
- * - Vertex-colored Alpine Mountains, Foothills & Valley Floor
- * - Airport Runway with Threshold Markings, Centerline & Edge Lights
- * - Composite 7-Part Air Traffic Control Tower (with rotating radar) & Hangar
- * - Instanced Conifer Pine Forest (300+ multi-tier trees grounded on terrain)
- * - Instanced Mountain Boulders & Ridge Wind Turbines
- * - High-Altitude Cumulus Cloud Clusters
- * - Interactive Flight Waypoint Rings
+ * - Mode 1 ('mountains'): Vertex-colored Alpine Mountains, Foothills, Valley Floor,
+ *   Airport Runway, 7-Part Control Tower, Hangar, 300+ Pine Trees, Boulders, High Clouds & Waypoint Rings.
+ * - Mode 2 ('clouds_only'): Pure 3D Volumetric Cloud Sky Deck at flight altitudes with Waypoint Rings.
+ * - Mode 3 ('off'): Hidden terrain.
  */
 export function createTerrainWorld(
   isSoftwareGl: boolean,
   initialWaypoints: WaypointRing[]
 ): TerrainWorldInstance {
   const worldGroup = new THREE.Group();
+  const groundTerrainGroup = new THREE.Group();
+  const cloudsOnlyGroup = new THREE.Group();
+  worldGroup.add(groundTerrainGroup);
+  worldGroup.add(cloudsOnlyGroup);
 
   // 1. Procedural Vertex-Colored Mountain & Valley Terrain Mesh
   const terrainSize = 460;
@@ -84,7 +86,7 @@ export function createTerrainWorld(
 
   const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
   terrainMesh.receiveShadow = !isSoftwareGl;
-  worldGroup.add(terrainMesh);
+  groundTerrainGroup.add(terrainMesh);
 
   // 2. Alpine Lake / River Basin on the East/West Valley Flanks
   const waterGeo = new THREE.PlaneGeometry(terrainSize, terrainSize);
@@ -96,7 +98,7 @@ export function createTerrainWorld(
   });
   const waterMesh = new THREE.Mesh(waterGeo, waterMat);
   waterMesh.position.y = -2.28;
-  worldGroup.add(waterMesh);
+  groundTerrainGroup.add(waterMesh);
 
   // 3. Airport Runway Strip at (0, -1.97, 0) along Z axis [-38..+38]
   const runwayGroup = new THREE.Group();
@@ -144,7 +146,7 @@ export function createTerrainWorld(
     }
   }
 
-  worldGroup.add(runwayGroup);
+  groundTerrainGroup.add(runwayGroup);
 
   // 4. Composite Air Traffic Control Tower & Hangar Complex
   const towerGroup = new THREE.Group();
@@ -169,32 +171,26 @@ export function createTerrainWorld(
   });
   const beaconMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
 
-  // Part 1: Operations Base Building
   const baseBldg = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.8, 4.2), concreteMat);
   baseBldg.position.set(0, 0.9, 0);
   towerGroup.add(baseBldg);
 
-  // Part 2: Tower Shaft
   const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.15, 6.2, 8), concreteMat);
   shaft.position.set(0, 4.0, -1.0);
   towerGroup.add(shaft);
 
-  // Part 3: Catwalk Observation Deck
   const catwalk = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.35, 0.45, 8), darkTrimMat);
   catwalk.position.set(0, 7.2, -1.0);
   towerGroup.add(catwalk);
 
-  // Part 4: Glass Control Cab
   const cab = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.25, 1.35, 8), glassCabMat);
   cab.position.set(0, 8.05, -1.0);
   towerGroup.add(cab);
 
-  // Part 5: Tower Roof Cap
   const roof = new THREE.Mesh(new THREE.ConeGeometry(1.65, 0.65, 8), darkTrimMat);
   roof.position.set(0, 9.0, -1.0);
   towerGroup.add(roof);
 
-  // Part 6: Rotating Radar Dish Assembly
   const radarPivot = new THREE.Group();
   radarPivot.position.set(0, 9.55, -1.0);
   const radarDish = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.35, 0.18), concreteMat);
@@ -204,12 +200,10 @@ export function createTerrainWorld(
   radarPivot.add(radarMast);
   towerGroup.add(radarPivot);
 
-  // Part 7: Red Aviation Obstruction Beacon
   const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), beaconMat);
   beacon.position.set(0, 9.9, -1.0);
   towerGroup.add(beacon);
 
-  // Hangar Building on opposite side of runway
   const hangarGroup = new THREE.Group();
   hangarGroup.position.set(-10.0, -2.0, 6.0);
   const hangarBody = new THREE.Mesh(new THREE.BoxGeometry(5.2, 2.2, 7.5), concreteMat);
@@ -223,8 +217,8 @@ export function createTerrainWorld(
   hangarRoof.rotation.y = Math.PI / 2;
   hangarRoof.position.y = 2.2;
   hangarGroup.add(hangarRoof);
-  worldGroup.add(hangarGroup);
-  worldGroup.add(towerGroup);
+  groundTerrainGroup.add(hangarGroup);
+  groundTerrainGroup.add(towerGroup);
 
   // 5. Instanced Pine Forest (Multi-tier trunk + lower cone + upper cone)
   const treeCount = 320;
@@ -261,12 +255,10 @@ export function createTerrainWorld(
     const tx = (nextRand() - 0.5) * 380;
     const tz = (nextRand() - 0.5) * 380;
 
-    // Keep runway and apron clear of trees
     if (Math.abs(tx) < 16 && Math.abs(tz) < 48) continue;
 
     const ty = getTerrainHeight(tx, tz);
     const relH = ty + 2.0;
-    // Place trees on valley floor and foothills (not underwater or on high snow peaks)
     if (relH < 0.05 || relH > 8.2) continue;
 
     const scale = 0.75 + nextRand() * 0.65;
@@ -302,9 +294,9 @@ export function createTerrainWorld(
   lowerInst.frustumCulled = false;
   upperInst.frustumCulled = false;
 
-  worldGroup.add(trunkInst);
-  worldGroup.add(lowerInst);
-  worldGroup.add(upperInst);
+  groundTerrainGroup.add(trunkInst);
+  groundTerrainGroup.add(lowerInst);
+  groundTerrainGroup.add(upperInst);
 
   // 6. Instanced Alpine Rock Boulders on Slopes
   const rockCount = 90;
@@ -337,14 +329,14 @@ export function createTerrainWorld(
   rockInst.instanceMatrix.needsUpdate = true;
   rockInst.computeBoundingSphere();
   rockInst.frustumCulled = false;
-  worldGroup.add(rockInst);
+  groundTerrainGroup.add(rockInst);
 
-  // 7. High-Altitude 3D Cumulus Cloud Clusters
-  const cloudCount = 36;
-  const cloudGeo = new THREE.DodecahedronGeometry(2.0, 1);
+  // 7. High-Altitude 3D Cumulus Cloud Clusters (Always visible in both 'mountains' and 'clouds_only')
+  const cloudCount = 42;
+  const cloudGeo = new THREE.DodecahedronGeometry(2.2, 1);
   const cloudMat = new THREE.MeshStandardMaterial({
-    color: 0xe2e8f0,
-    roughness: 0.95,
+    color: 0xf8fafc,
+    roughness: 0.92,
     metalness: 0.0,
     flatShading: true,
   });
@@ -352,10 +344,10 @@ export function createTerrainWorld(
   for (let i = 0; i < cloudCount; i++) {
     const cx = (nextRand() - 0.5) * 400;
     const cz = (nextRand() - 0.5) * 400;
-    const cy = 42 + nextRand() * 16;
+    const cy = 32 + nextRand() * 20;
     dummy.position.set(cx, cy, cz);
     dummy.rotation.set(0, nextRand() * Math.PI, 0);
-    dummy.scale.set(1.4 + nextRand() * 1.2, 0.45 + nextRand() * 0.25, 1.1 + nextRand() * 1.0);
+    dummy.scale.set(1.6 + nextRand() * 1.4, 0.48 + nextRand() * 0.3, 1.2 + nextRand() * 1.1);
     dummy.updateMatrix();
     cloudInst.setMatrixAt(i, dummy.matrix);
   }
@@ -364,7 +356,49 @@ export function createTerrainWorld(
   cloudInst.frustumCulled = false;
   worldGroup.add(cloudInst);
 
-  // 8. Interactive Flight Waypoint Rings along the Valley & Mountain Passes
+  // 7b. Multi-Layered Flight-Level Cloud Deck for 'clouds_only' Terrain Mode
+  // Surrounds the aircraft with volumetric cloud formations at y = -12..+26 so flying in Clouds-Only mode feels immersive!
+  const skyDeckCloudPuffs = 150;
+  const skyCloudMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.9,
+    metalness: 0.0,
+    flatShading: true,
+  });
+  const skyDeckInst = new THREE.InstancedMesh(cloudGeo, skyCloudMat, skyDeckCloudPuffs);
+  let puffIdx = 0;
+  for (let c = 0; c < 70 && puffIdx < skyDeckCloudPuffs; c++) {
+    const baseCx = (nextRand() - 0.5) * 340;
+    const baseCz = (nextRand() - 0.5) * 340;
+    const baseCy = -10 + nextRand() * 34; // Spread across flight altitudes (-10m to +24m)
+    // Keep immediate spawn/camera view pocket clear so the aircraft is always unobstructed
+    if (Math.hypot(baseCx, baseCz) < 22 && Math.abs(baseCy - 2) < 8) continue;
+    const rotY = nextRand() * Math.PI;
+
+    // Each cloud cluster has 3 overlapping puffs (center, left, right) for rich cumulus silhouette
+    for (let sub = 0; sub < 3 && puffIdx < skyDeckCloudPuffs; sub++) {
+      const offsetX = sub === 0 ? 0 : (sub === 1 ? -2.8 : 2.8) + (nextRand() - 0.5) * 1.2;
+      const offsetY = sub === 0 ? 0.5 : -0.3 + (nextRand() - 0.5) * 0.4;
+      const offsetZ = (nextRand() - 0.5) * 1.8;
+      dummy.position.set(baseCx + offsetX, baseCy + offsetY, baseCz + offsetZ);
+      dummy.rotation.set(0, rotY + sub * 0.5, 0);
+      const sx = (sub === 0 ? 2.1 : 1.5) + nextRand() * 0.9;
+      const sy = (sub === 0 ? 0.75 : 0.55) + nextRand() * 0.25;
+      const sz = (sub === 0 ? 1.6 : 1.2) + nextRand() * 0.8;
+      dummy.scale.set(sx, sy, sz);
+      dummy.updateMatrix();
+      skyDeckInst.setMatrixAt(puffIdx, dummy.matrix);
+      puffIdx++;
+    }
+  }
+  skyDeckInst.count = puffIdx;
+  skyDeckInst.instanceMatrix.needsUpdate = true;
+  skyDeckInst.computeBoundingSphere();
+  skyDeckInst.frustumCulled = false;
+  cloudsOnlyGroup.add(skyDeckInst);
+  cloudsOnlyGroup.visible = false;
+
+  // 8. Interactive Flight Waypoint Rings along the Valley & Sky Passes
   const waypointMeshes: THREE.Mesh[] = [];
   const ringGeo = new THREE.TorusGeometry(4.0, 0.26, 10, 32);
 
@@ -382,15 +416,21 @@ export function createTerrainWorld(
     waypointMeshes.push(ringMesh);
   });
 
-  // Update loop for animated world elements
+  // Update loop for animated world elements & terrain mode visibility
   const update = (
     delta: number,
     elapsedTime: number,
     waypoints: WaypointRing[],
-    _aircraftPos: THREE.Vector3
+    _aircraftPos: THREE.Vector3,
+    terrainMode: TerrainMode = 'mountains'
   ) => {
-    // Rotate control tower radar
-    radarPivot.rotation.y += delta * 1.8;
+    groundTerrainGroup.visible = terrainMode === 'mountains';
+    cloudsOnlyGroup.visible = terrainMode === 'clouds_only';
+
+    // Rotate control tower radar when mountains mode is active
+    if (terrainMode === 'mountains') {
+      radarPivot.rotation.y += delta * 1.8;
+    }
 
     // Update waypoint ring visual state & gentle spin
     for (let i = 0; i < waypointMeshes.length; i++) {
@@ -418,3 +458,4 @@ export function createTerrainWorld(
     update,
   };
 }
+

@@ -8,9 +8,16 @@ import {
   RotateCcw,
   Zap,
   Mountain,
+  Cloud,
   Navigation,
+  ArrowLeftRight,
 } from 'lucide-react';
-import { type FlightPositionState, type JoystickInput } from '../utils/flightPhysics';
+import {
+  mapHardwareJoystick,
+  type FlightPositionState,
+  type JoystickInput,
+  type TerrainMode,
+} from '../utils/flightPhysics';
 
 interface JoystickRemoteHUDProps {
   remoteInput: JoystickInput;
@@ -18,8 +25,8 @@ interface JoystickRemoteHUDProps {
   flightState: FlightPositionState;
   totalRings: number;
   onResetFlight: () => void;
-  showTerrain: boolean;
-  onToggleTerrain: () => void;
+  terrainMode: TerrainMode;
+  onChangeTerrainMode: (mode: TerrainMode) => void;
   espJoyX?: number;
   espJoyY?: number;
 }
@@ -30,22 +37,39 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
   flightState,
   totalRings,
   onResetFlight,
-  showTerrain,
-  onToggleTerrain,
+  terrainMode,
+  onChangeTerrainMode,
   espJoyX,
   espJoyY,
 }) => {
   const padRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
 
+  // Apply VRx/VRy swap and polarity reversal to raw ESP32 hardware joystick inputs
+  const mappedHw = mapHardwareJoystick(
+    {
+      pitch: 0,
+      roll: 0,
+      yaw: 0,
+      joyX: espJoyX ?? 0,
+      joyY: espJoyY ?? 0,
+      timestamp: 0,
+    },
+    remoteInput
+  );
+
   const activeJoyX =
-    espJoyX !== undefined && Math.abs(espJoyX) > Math.abs(remoteInput.joyX)
-      ? espJoyX
+    Math.abs(mappedHw.joyX) > Math.abs(remoteInput.joyX)
+      ? mappedHw.joyX
       : remoteInput.joyX;
   const activeJoyY =
-    espJoyY !== undefined && Math.abs(espJoyY) > Math.abs(remoteInput.joyY)
-      ? espJoyY
+    Math.abs(mappedHw.joyY) > Math.abs(remoteInput.joyY)
+      ? mappedHw.joyY
       : remoteInput.joyY;
+
+  const swapVRxVRy = remoteInput.swapVRxVRy !== false;
+  const reverseXY = remoteInput.reverseX !== false && remoteInput.reverseY !== false;
+  const turnOnSideways = remoteInput.turnOnSideways === true;
 
   const updateStickFromPointer = (clientX: number, clientY: number) => {
     const el = padRef.current;
@@ -107,7 +131,7 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
   return (
     <div
       data-testid="custom-remote-hud"
-      className="flex flex-col gap-2.5 bg-white/95 dark:bg-slate-900/95 border border-slate-200/90 dark:border-slate-800 rounded-xl shadow-md p-3 select-none w-60 transition-colors"
+      className="flex flex-col gap-2 bg-white/95 dark:bg-slate-900/95 border border-slate-200/90 dark:border-slate-800 rounded-xl shadow-md p-3 select-none w-[264px] transition-colors"
     >
       {/* Header */}
       <div className="flex items-center justify-between pb-1.5 border-b border-slate-100 dark:border-slate-800">
@@ -127,7 +151,7 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
         </button>
       </div>
 
-      {/* Live Flight Sim Telemetry Strip (Speed, Alt, Rings, Pos) */}
+      {/* Live Flight Sim Telemetry Strip (Speed, Alt, Rings) */}
       <div className="grid grid-cols-3 gap-1 text-center font-mono">
         <div className="bg-slate-50 dark:bg-slate-800/80 p-1 rounded border border-slate-200/80 dark:border-slate-700">
           <div className="text-[9px] font-sans font-semibold text-slate-500 dark:text-slate-400">
@@ -214,7 +238,7 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
           </span>
         </div>
 
-        {/* Tactile Flight Direction D-Pad (Forward / Backward / Left / Right) */}
+        {/* Tactile Flight Direction D-Pad (Forward / Backward / Sideways Left / Sideways Right) */}
         <div className="flex flex-col items-center gap-1">
           <div className="grid grid-cols-3 gap-1 w-24 h-24 items-center justify-items-center">
             <div />
@@ -242,7 +266,7 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
                   ? 'bg-sky-600 border-sky-500 text-white'
                   : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-sky-50 dark:hover:bg-slate-700'
               }`}
-              title="Move Left (A / Left Arrow)"
+              title="Move Sideways Left (A / Left Arrow)"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
             </button>
@@ -273,7 +297,7 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
                   ? 'bg-sky-600 border-sky-500 text-white'
                   : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-sky-50 dark:hover:bg-slate-700'
               }`}
-              title="Move Right (D / Right Arrow)"
+              title="Move Sideways Right (D / Right Arrow)"
             >
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
@@ -300,7 +324,76 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
         </div>
       </div>
 
-      {/* Cruise Auto-Throttle & Terrain World Toggle */}
+      {/* ESP32 Joystick VRx/VRy Mapping & Sideways Glide Mode */}
+      <div className="flex flex-col gap-1 pt-1.5 border-t border-slate-100 dark:border-slate-800">
+        <div className="flex items-center justify-between text-[9px] font-semibold text-slate-500 dark:text-slate-400">
+          <span className="flex items-center gap-1">
+            <ArrowLeftRight className="w-2.5 h-2.5 text-sky-500" />
+            <span>ESP32 JOYSTICK AXIS MAP</span>
+          </span>
+          <span className="font-mono tabular-nums" data-testid="hud-coordinates">
+            X:{flightState.x.toFixed(0)}m Z:{flightState.z.toFixed(0)}m
+          </span>
+        </div>
+        <div className="grid grid-cols-3 gap-1">
+          <button
+            type="button"
+            onClick={() =>
+              onChangeRemote({
+                ...remoteInput,
+                swapVRxVRy: !swapVRxVRy,
+              })
+            }
+            title="Swap VRx and VRy analog pins from ESP32 joystick"
+            className={`py-1 px-1 rounded text-[9px] font-semibold border transition-colors cursor-pointer truncate ${
+              swapVRxVRy
+                ? 'bg-sky-600/90 border-sky-500 text-white'
+                : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            VRx↔VRy: {swapVRxVRy ? 'ON' : 'OFF'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              onChangeRemote({
+                ...remoteInput,
+                reverseX: !reverseXY,
+                reverseY: !reverseXY,
+              })
+            }
+            title="Reverse VRx and VRy joystick polarity"
+            className={`py-1 px-1 rounded text-[9px] font-semibold border transition-colors cursor-pointer truncate ${
+              reverseXY
+                ? 'bg-sky-600/90 border-sky-500 text-white'
+                : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            Rev XY: {reverseXY ? 'ON' : 'OFF'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              onChangeRemote({
+                ...remoteInput,
+                turnOnSideways: !turnOnSideways,
+              })
+            }
+            title="Choose whether sideways joystick glides sideways (Strafe) or turns heading"
+            className={`py-1 px-1 rounded text-[9px] font-semibold border transition-colors cursor-pointer truncate ${
+              !turnOnSideways
+                ? 'bg-emerald-600 border-emerald-500 text-white'
+                : 'bg-amber-600 border-amber-500 text-white'
+            }`}
+          >
+            {!turnOnSideways ? 'Side: Glide' : 'Side: Turn'}
+          </button>
+        </div>
+      </div>
+
+      {/* Cruise Auto-Throttle & 3-Mode Terrain Switcher (Mountains / Clouds Only / Off) */}
       <div className="flex flex-col gap-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-800 text-[11px]">
         <div className="flex items-center justify-between gap-1">
           <button
@@ -341,22 +434,47 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
           </button>
         </div>
 
-        {/* Terrain Environment Switch */}
-        <div className="flex items-center justify-between text-[10px] text-slate-600 dark:text-slate-400 pt-0.5">
-          <span className="font-mono tabular-nums" data-testid="hud-coordinates">
-            X:{flightState.x.toFixed(0)}m Z:{flightState.z.toFixed(0)}m
-          </span>
+        {/* 3-Mode World Terrain Selector: Mountains & Trees | Clouds Only | Off */}
+        <div className="grid grid-cols-3 gap-1 pt-0.5">
           <button
             type="button"
-            onClick={onToggleTerrain}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded font-semibold cursor-pointer ${
-              showTerrain
-                ? 'bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 border border-sky-300 dark:border-sky-800'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+            data-testid="terrain-mode-mountains"
+            onClick={() => onChangeTerrainMode('mountains')}
+            className={`flex items-center justify-center gap-1 py-1 px-1.5 rounded text-[10px] font-semibold cursor-pointer transition-colors ${
+              terrainMode === 'mountains'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
             }`}
           >
-            <Mountain className="w-3 h-3" />
-            <span>{showTerrain ? '3D Terrain: ON' : 'Terrain: OFF'}</span>
+            <Mountain className="w-3 h-3 shrink-0" />
+            <span>Mountains</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="terrain-mode-clouds"
+            onClick={() => onChangeTerrainMode('clouds_only')}
+            className={`flex items-center justify-center gap-1 py-1 px-1.5 rounded text-[10px] font-semibold cursor-pointer transition-colors ${
+              terrainMode === 'clouds_only'
+                ? 'bg-sky-600 text-white shadow-xs'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+          >
+            <Cloud className="w-3 h-3 shrink-0" />
+            <span>Clouds Only</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="terrain-mode-off"
+            onClick={() => onChangeTerrainMode('off')}
+            className={`flex items-center justify-center py-1 px-1.5 rounded text-[10px] font-semibold cursor-pointer transition-colors ${
+              terrainMode === 'off'
+                ? 'bg-slate-700 text-white shadow-xs'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+          >
+            <span>No Terrain</span>
           </button>
         </div>
       </div>
