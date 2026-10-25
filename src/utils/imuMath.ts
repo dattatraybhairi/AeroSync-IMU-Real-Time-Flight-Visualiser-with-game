@@ -220,18 +220,26 @@ export function parseIMUString(raw: string): IMUData | null {
     }
   }
 
-  // Case 2: Key-Value pairs like "P: 10.5, R: -3.2, Y: 180, JX: 0.5, JY: -0.2"
-  const pitchMatch = line.match(/\b(?:pitch|pitch_deg|p)\s*[:=]\s*([+-]?\d+(?:\.\d+)?)/i);
-  const rollMatch = line.match(/\b(?:roll|roll_deg|r)\s*[:=]\s*([+-]?\d+(?:\.\d+)?)/i);
-  const yawMatch = line.match(/\b(?:yaw|yaw_deg|heading|y|hdg)\s*[:=]\s*([+-]?\d+(?:\.\d+)?)/i);
+  // Case 2: Key-Value pairs like "P: 10.5, R: -3.2, Y: 180, JX: 0.5, JY: -0.2" or ST7735 "X 10.5 Y -3.2"
+  const pitchMatch = line.match(/\b(?:pitch|pitch_deg|p|x)\s*[:=\s]\s*([+-]?\d+(?:\.\d+)?)/i);
+  const rollMatch = line.match(/\b(?:roll|roll_deg|r|y)\s*[:=\s]\s*([+-]?\d+(?:\.\d+)?)/i);
+  const yawMatch = line.match(/\b(?:yaw|yaw_deg|heading|hdg|z)\s*[:=\s]\s*([+-]?\d+(?:\.\d+)?)/i);
+  const explicitYAsYaw = line.match(/\b(?:p|pitch)\s*[:=].*\by\s*[:=]\s*([+-]?\d+(?:\.\d+)?)/i);
   const jxMatch = line.match(/\b(?:joyx|jx|vx)\s*[:=]\s*([+-]?\d+(?:\.\d+)?)/i);
   const jyMatch = line.match(/\b(?:joyy|jy|vy)\s*[:=]\s*([+-]?\d+(?:\.\d+)?)/i);
   const btnMatch = line.match(/\b(?:joybtn|btn|sw)\s*[:=]\s*(\d+)/i);
 
   if (pitchMatch || rollMatch || yawMatch) {
+    const hasExplicitPR = /\b(?:pitch|pitch_deg|p)\s*[:=]/i.test(line);
     const pitch = pitchMatch ? parseFloat(pitchMatch[1]) : 0;
-    const roll = rollMatch ? parseFloat(rollMatch[1]) : 0;
-    const yaw = yawMatch ? parseFloat(yawMatch[1]) : 0;
+    const roll = hasExplicitPR
+      ? (line.match(/\b(?:roll|roll_deg|r)\s*[:=]\s*([+-]?\d+(?:\.\d+)?)/i)
+          ? parseFloat(line.match(/\b(?:roll|roll_deg|r)\s*[:=]\s*([+-]?\d+(?:\.\d+)?)/i)![1])
+          : 0)
+      : (rollMatch ? parseFloat(rollMatch[1]) : 0);
+    const yaw = explicitYAsYaw
+      ? parseFloat(explicitYAsYaw[1])
+      : (yawMatch ? parseFloat(yawMatch[1]) : 0);
 
     const axMatch = line.match(/ax\s*[:=]\s*([+-]?\d+(?:\.\d+)?)/i);
     const ayMatch = line.match(/ay\s*[:=]\s*([+-]?\d+(?:\.\d+)?)/i);
@@ -253,6 +261,18 @@ export function parseIMUString(raw: string): IMUData | null {
 
   // Case 3: Delimited numbers (comma, tab, semicolon, space)
   const tokens = line.split(/[,\s;\t]+/).map(t => t.trim()).filter(Boolean);
+  if (tokens.length === 2) {
+    const p = parseFloat(tokens[0]);
+    const r = parseFloat(tokens[1]);
+    if (!isNaN(p) && !isNaN(r)) {
+      return {
+        pitch: normalizeAngle180(p),
+        roll: normalizeAngle180(r),
+        yaw: 0,
+        timestamp: Date.now(),
+      };
+    }
+  }
   if (tokens.length >= 3) {
     const p = parseFloat(tokens[0]);
     const r = parseFloat(tokens[1]);

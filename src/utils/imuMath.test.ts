@@ -75,6 +75,17 @@ test('parseIMUString parses Key-Value and JSON formats with joystick axes', () =
   assert.equal(json.pitch, -5.5);
   assert.equal(json.joyX, -0.35);
   assert.equal(json.joyY, 0.6);
+
+  // ST7735 X/Y format and 2-value pitch,roll CSV
+  const xyFormat = parseIMUString('X 14.2 Y -8.6');
+  assert.ok(xyFormat);
+  assert.equal(xyFormat.pitch, 14.2);
+  assert.equal(xyFormat.roll, -8.6);
+
+  const twoValCsv = parseIMUString('9.5, -12.4');
+  assert.ok(twoValCsv);
+  assert.equal(twoValCsv.pitch, 9.5);
+  assert.equal(twoValCsv.roll, -12.4);
 });
 
 test('applyCalibration handles offsets and inversions while preserving joystick fields', () => {
