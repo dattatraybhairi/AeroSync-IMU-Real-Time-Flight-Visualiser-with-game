@@ -71,17 +71,17 @@ export default function App() {
 
   const [calibratedIMU, setCalibratedIMU] = useState<IMUData>(prevCalibratedRef.current);
 
-  // Custom Flight Remote (Joystick + Cruise Thrust + Swapped & Reversed VRx/VRy + Sideways Glide)
+  // Custom Flight Remote (Stops at one place until joystick moves; turns + moves forward/backward with joystick)
   const [remoteInput, setRemoteInput] = useState<JoystickInput>({
     joyX: 0,
     joyY: 0,
-    autoCruise: true,
+    autoCruise: false,
     cruiseThrottle: 0.65,
     boost: false,
     swapVRxVRy: true,
     reverseX: true,
     reverseY: true,
-    turnOnSideways: false,
+    turnOnSideways: true,
   });
 
   const [flightState, setFlightState] = useState<FlightPositionState>(INITIAL_FLIGHT_STATE);
@@ -130,33 +130,24 @@ export default function App() {
 
   const handleChangeSource = useCallback((nextSource: DataSourceType) => {
     setCurrentSource(nextSource);
-    if (nextSource === 'webserial' || nextSource === 'websocket' || nextSource === 'device_imu') {
-      // Stop auto-cruise when connecting hardware ESP32 / Device IMU so aircraft & camera remain rock-solid until moved by joystick
-      setRemoteInput((prev) => ({
-        ...prev,
-        joyX: 0,
-        joyY: 0,
-        autoCruise: false,
-      }));
-      const zeroed: IMUData = {
-        pitch: 0,
-        roll: 0,
-        yaw: 0,
-        joyX: 0,
-        joyY: 0,
-        timestamp: Date.now(),
-      };
-      prevCalibratedRef.current = zeroed;
-      setRawIMU(zeroed);
-      setCalibratedIMU(zeroed);
-    } else if (nextSource === 'simulation') {
-      setRemoteInput((prev) => ({
-        ...prev,
-        joyX: 0,
-        joyY: 0,
-        autoCruise: true,
-      }));
-    }
+    // Keep autoCruise OFF by default across all sources so the aircraft stops at one place until moved by the joystick
+    setRemoteInput((prev) => ({
+      ...prev,
+      joyX: 0,
+      joyY: 0,
+      autoCruise: false,
+    }));
+    const zeroed: IMUData = {
+      pitch: 0,
+      roll: 0,
+      yaw: 0,
+      joyX: 0,
+      joyY: 0,
+      timestamp: Date.now(),
+    };
+    prevCalibratedRef.current = zeroed;
+    setRawIMU(zeroed);
+    setCalibratedIMU(zeroed);
   }, []);
 
   const handleNavigateSection = (

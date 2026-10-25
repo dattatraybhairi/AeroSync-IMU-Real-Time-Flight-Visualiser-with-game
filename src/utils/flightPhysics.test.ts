@@ -142,13 +142,13 @@ test('stepFlightPhysics keeps aircraft and camera target 100% stationary when ES
   assert.equal(state.headingDeg, 42.0, 'Heading must not drift from roll tilt when stationary');
 });
 
-test('stepFlightPhysics moves sideways without turning heading left when turnOnSideways is false, and swaps/reverses VRx and VRy', () => {
-  const hwIMU: IMUData = {
+test('stepFlightPhysics stops aircraft at one place when joystick is neutral and moves/turns when joystick is deflected', () => {
+  const neutralIMU: IMUData = {
     pitch: 0,
     roll: 0,
     yaw: 0,
-    joyX: -0.8, // Raw VRx (will be swapped to Y and reversed to +0.8 forward)
-    joyY: -0.6, // Raw VRy (will be swapped to X and reversed to +0.6 right sideways)
+    joyX: 0,
+    joyY: 0,
     timestamp: Date.now(),
   };
 
@@ -156,53 +156,42 @@ test('stepFlightPhysics moves sideways without turning heading left when turnOnS
     joyX: 0,
     joyY: 0,
     autoCruise: false,
-    cruiseThrottle: 0,
-    swapVRxVRy: true,
-    reverseX: true,
-    reverseY: true,
-    turnOnSideways: false,
-  };
-
-  let state = { ...INITIAL_FLIGHT_STATE, x: 0, y: 10, z: 0 };
-  state = stepFlightPhysics(state, hwIMU, remote, 0.05, undefined, 'clouds_only');
-
-  assert.ok(state.x > 0, `Expected aircraft to move sideways right (+X), got x=${state.x}`);
-  assert.ok(state.z < 0, `Expected aircraft to move forward (-Z), got z=${state.z}`);
-  assert.equal(state.headingDeg, 0, 'Aircraft heading must stay at 0° instead of turning left when moving sideways');
-});
-
-test('stepFlightPhysics in clouds_only mode keeps aircraft cruising at one fixed point when joystick is neutral', () => {
-  const simIMU: IMUData = {
-    pitch: 8.5,
-    roll: -12.0,
-    yaw: 45.0,
-    timestamp: Date.now(),
-  };
-
-  const remote: JoystickInput = {
-    joyX: 0,
-    joyY: 0,
-    autoCruise: true,
     cruiseThrottle: 0.65,
     swapVRxVRy: true,
     reverseX: true,
     reverseY: true,
-    turnOnSideways: false,
+    turnOnSideways: true,
   };
 
-  let state = { ...INITIAL_FLIGHT_STATE };
-  const startX = state.x;
-  const startY = state.y;
-  const startZ = state.z;
+  let state = { ...INITIAL_FLIGHT_STATE, x: 0, y: 10, z: 0 };
 
-  for (let i = 0; i < 60; i++) {
-    state = stepFlightPhysics(state, simIMU, remote, 0.016, undefined, 'clouds_only');
+  // 1. Neutral joystick: aircraft remains 100% stopped at one place
+  for (let i = 0; i < 30; i++) {
+    state = stepFlightPhysics(state, neutralIMU, remote, 0.05, undefined, 'clouds_only');
   }
+  assert.equal(state.x, 0, 'Aircraft X must stay stopped at 0 when joystick is neutral');
+  assert.equal(state.z, 0, 'Aircraft Z must stay stopped at 0 when joystick is neutral');
+  assert.equal(state.airspeedKts, 0, 'Airspeed must be 0 KT when stopped');
 
-  assert.equal(state.x, startX, 'Aircraft X must stay at one point during clouds_only cruise');
-  assert.equal(state.y, startY, 'Aircraft Y must stay at one point during clouds_only cruise');
-  assert.equal(state.z, startZ, 'Aircraft Z must stay at one point during clouds_only cruise');
-  assert.ok(state.airspeedKts > 100, `Expected cruise airspeed > 100 KT in clouds_only mode, got ${state.airspeedKts}`);
+  // 2. Joystick moved forward + right: aircraft turns right and moves forward/right
+  const activeIMU: IMUData = {
+    ...neutralIMU,
+    joyX: -0.8, // Swapped to Y and reversed -> +0.8 forward
+    joyY: -0.6, // Swapped to X and reversed -> +0.6 right turn & glide
+  };
+  state = stepFlightPhysics(state, activeIMU, remote, 0.05, undefined, 'clouds_only');
+  assert.ok(state.z < 0, `Expected aircraft to move forward (-Z), got z=${state.z}`);
+  assert.ok(state.x > 0, `Expected aircraft to move right (+X), got x=${state.x}`);
+  assert.ok(state.headingDeg > 0 && state.headingDeg < 90, `Expected aircraft to turn right (+heading), got ${state.headingDeg}`);
+
+  // 3. Joystick released back to center: aircraft decelerates and stops at the new place
+  for (let i = 0; i < 60; i++) {
+    state = stepFlightPhysics(state, neutralIMU, remote, 0.05, undefined, 'clouds_only');
+  }
+  assert.equal(state.forwardSpeed, 0, 'Forward speed must return to 0 when joystick is released');
+  assert.equal(state.lateralSpeed, 0, 'Lateral speed must return to 0 when joystick is released');
+  assert.equal(state.airspeedKts, 0, 'Airspeed must return to 0 KT when joystick is released');
 });
+
 
 

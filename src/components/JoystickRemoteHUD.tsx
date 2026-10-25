@@ -69,7 +69,7 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
 
   const swapVRxVRy = remoteInput.swapVRxVRy !== false;
   const reverseXY = remoteInput.reverseX !== false && remoteInput.reverseY !== false;
-  const turnOnSideways = remoteInput.turnOnSideways === true;
+  const turnOnSideways = remoteInput.turnOnSideways !== false;
 
   const updateStickFromPointer = (clientX: number, clientY: number) => {
     const el = padRef.current;
@@ -122,9 +122,17 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
   const pulseDirection = (jx: number, jy: number) => {
     onChangeRemote({
       ...remoteInput,
-      autoCruise: jy < 0 ? false : remoteInput.autoCruise,
+      autoCruise: false,
       joyX: jx,
       joyY: jy,
+    });
+  };
+
+  const releaseDirection = () => {
+    onChangeRemote({
+      ...remoteInput,
+      joyX: 0,
+      joyY: 0,
     });
   };
 
@@ -245,13 +253,16 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
             <button
               type="button"
               aria-label="Move Plane Forward"
-              onClick={() => pulseDirection(0, 1.0)}
+              onPointerDown={() => pulseDirection(0, 1.0)}
+              onPointerUp={releaseDirection}
+              onPointerLeave={releaseDirection}
+              onPointerCancel={releaseDirection}
               className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-colors cursor-pointer ${
                 activeJoyY > 0.2
                   ? 'bg-sky-600 border-sky-500 text-white'
                   : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-sky-50 dark:hover:bg-slate-700'
               }`}
-              title="Move Forward (W / Up Arrow)"
+              title="Hold to Move Forward (W / Up Arrow)"
             >
               <ArrowUp className="w-3.5 h-3.5" />
             </button>
@@ -260,13 +271,16 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
             <button
               type="button"
               aria-label="Move Plane Left"
-              onClick={() => pulseDirection(-0.85, activeJoyY)}
+              onPointerDown={() => pulseDirection(-0.85, 0)}
+              onPointerUp={releaseDirection}
+              onPointerLeave={releaseDirection}
+              onPointerCancel={releaseDirection}
               className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-colors cursor-pointer ${
                 activeJoyX < -0.2
                   ? 'bg-sky-600 border-sky-500 text-white'
                   : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-sky-50 dark:hover:bg-slate-700'
               }`}
-              title="Move Sideways Left (A / Left Arrow)"
+              title="Hold to Turn & Move Left (A / Left Arrow)"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
             </button>
@@ -291,13 +305,16 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
             <button
               type="button"
               aria-label="Move Plane Right"
-              onClick={() => pulseDirection(0.85, activeJoyY)}
+              onPointerDown={() => pulseDirection(0.85, 0)}
+              onPointerUp={releaseDirection}
+              onPointerLeave={releaseDirection}
+              onPointerCancel={releaseDirection}
               className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-colors cursor-pointer ${
                 activeJoyX > 0.2
                   ? 'bg-sky-600 border-sky-500 text-white'
                   : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-sky-50 dark:hover:bg-slate-700'
               }`}
-              title="Move Sideways Right (D / Right Arrow)"
+              title="Hold to Turn & Move Right (D / Right Arrow)"
             >
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
@@ -306,13 +323,16 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
             <button
               type="button"
               aria-label="Move Plane Backward"
-              onClick={() => pulseDirection(0, -0.85)}
+              onPointerDown={() => pulseDirection(0, -0.85)}
+              onPointerUp={releaseDirection}
+              onPointerLeave={releaseDirection}
+              onPointerCancel={releaseDirection}
               className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-colors cursor-pointer ${
                 activeJoyY < -0.2
                   ? 'bg-amber-600 border-amber-500 text-white'
                   : 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-amber-50 dark:hover:bg-slate-700'
               }`}
-              title="Move Backward / Reverse (S / Down Arrow)"
+              title="Hold to Move Backward / Reverse (S / Down Arrow)"
             >
               <ArrowDown className="w-3.5 h-3.5" />
             </button>

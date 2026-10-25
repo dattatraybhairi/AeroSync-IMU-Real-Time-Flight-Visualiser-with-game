@@ -196,10 +196,10 @@ export function stepFlightPhysics(
   const boostMultiplier = remote.boost || imu.joyBtn ? 1.65 : 1.0;
 
   // Target forward/backward velocity (m/s):
-  // In 'clouds_only' mode, autoCruise means the aircraft stays in cruise at one fixed point while clouds stream past it;
-  // only explicit joystick Y input (effectiveJoyY) translates the aircraft position forward/backward!
+  // Aircraft stays stopped at one place when joystick is at rest (unless user explicitly toggles autoCruise ON).
+  // Moving joystick forward (effectiveJoyY > 0) moves forward; moving backward (effectiveJoyY < 0) moves backward.
   let targetForwardCmd = effectiveJoyY;
-  if (terrainMode !== 'clouds_only' && remote.autoCruise && effectiveJoyY >= -0.05) {
+  if (remote.autoCruise && effectiveJoyY >= -0.05) {
     targetForwardCmd = Math.max(remote.cruiseThrottle, effectiveJoyY);
   }
 
@@ -207,37 +207,34 @@ export function stepFlightPhysics(
   const targetForwardSpeed = targetForwardCmd * maxForwardSpeed;
 
   // Target left/right sideways velocity (m/s) directly from Joystick X input
-  const maxLateralSpeed = 22.0 * boostMultiplier;
+  const maxLateralSpeed = 20.0 * boostMultiplier;
   const targetLateralSpeed = Math.max(-1, Math.min(1, effectiveJoyX)) * maxLateralSpeed;
 
-  // Smooth exponential damping for responsive flight feel
-  const responseRate = 1 - Math.exp(-6.5 * clampedDt);
+  // Smooth exponential damping for responsive flight feel and crisp stop when joystick returns to center
+  const responseRate = 1 - Math.exp(-7.5 * clampedDt);
   let forwardSpeed =
     prevState.forwardSpeed + (targetForwardSpeed - prevState.forwardSpeed) * responseRate;
   let lateralSpeed =
     prevState.lateralSpeed + (targetLateralSpeed - prevState.lateralSpeed) * responseRate;
 
-  // Snap tiny residual speeds to zero so the aircraft and camera come to a complete, rock-solid stop
-  if (Math.abs(targetForwardSpeed) < 0.01 && Math.abs(forwardSpeed) < 0.04) {
+  // Snap tiny residual speeds to zero so the aircraft and camera come to a complete, rock-solid stop at one place
+  if (Math.abs(targetForwardSpeed) < 0.01 && Math.abs(forwardSpeed) < 0.06) {
     forwardSpeed = 0;
   }
-  if (Math.abs(targetLateralSpeed) < 0.01 && Math.abs(lateralSpeed) < 0.04) {
+  if (Math.abs(targetLateralSpeed) < 0.01 && Math.abs(lateralSpeed) < 0.06) {
     lateralSpeed = 0;
   }
 
-  // By default (turnOnSideways = false), sideways joystick moves the aircraft sideways instead of turning left/right
+  // Turning: When joystick X is deflected (and turnOnSideways !== false), turn aircraft heading smoothly in that direction
+  const shouldTurn = remote.turnOnSideways !== false;
   const turnRateDegPerSec =
-    remote.turnOnSideways && Math.abs(effectiveJoyX) > 0.01
-      ? effectiveJoyX * 48 * boostMultiplier
+    shouldTurn && Math.abs(effectiveJoyX) > 0.01
+      ? effectiveJoyX * 52 * boostMultiplier
       : 0;
   const newYawAccumulator = normalizeHeading360(
     prevState.yawAccumulator + turnRateDegPerSec * clampedDt
   );
-  // In 'clouds_only' cruise-at-one-point mode, keep heading aligned with the incoming cloud stream unless turning is enabled
-  const headingDeg =
-    terrainMode === 'clouds_only' && !remote.turnOnSideways
-      ? 0
-      : normalizeHeading360(imu.yaw + newYawAccumulator);
+  const headingDeg = normalizeHeading360(imu.yaw + newYawAccumulator);
   const headingRad = degreesToRadians(headingDeg);
 
   // In Three.js aeronautical coordinates (matching euler.set(pRad, -yRad, -rRad, 'YXZ')):
@@ -251,16 +248,11 @@ export function stepFlightPhysics(
   const vx = fwdX * forwardSpeed + rightX * lateralSpeed;
   const vz = fwdZ * forwardSpeed + rightZ * lateralSpeed;
 
-  // Vertical climb/descent rate from Pitch angle ONLY when the aircraft is actually translating across terrain
+  // Vertical climb/descent rate from Pitch angle ONLY when the aircraft is actually moving
   const pitchDeadbanded = Math.abs(imu.pitch) > 2.5 ? imu.pitch : 0;
   const pitchRad = degreesToRadians(Math.max(-65, Math.min(65, pitchDeadbanded)));
   const activeSpeedMag = Math.abs(forwardSpeed) + Math.abs(lateralSpeed) * 0.35;
-  const vy =
-    terrainMode === 'clouds_only'
-      ? 0
-      : activeSpeedMag > 0.2
-      ? Math.sin(pitchRad) * activeSpeedMag * 0.65
-      : 0;
+  const vy = activeSpeedMag > 0.2 ? Math.sin(pitchRad) * activeSpeedMag * 0.65 : 0;
 
   let nextX = prevState.x + vx * clampedDt;
   let nextZ = prevState.z + vz * clampedDt;
@@ -296,12 +288,7 @@ export function stepFlightPhysics(
   }
 
   const totalSpeedMs = Math.sqrt(vx * vx + vy * vy + vz * vz);
-  // In clouds_only mode, display simulated cruise airspeed (~118 KT) even while aircraft holds one point
-  const cruiseAirspeedMs =
-    terrainMode === 'clouds_only' && remote.autoCruise
-      ? Math.max(totalSpeedMs, remote.cruiseThrottle * maxForwardSpeed)
-      : totalSpeedMs;
-  const airspeedKts = Math.round(cruiseAirspeedMs * 6.5);
+  const airspeedKts = Math.round(totalSpeedMs * 6.5);
   const altitudeFt = Math.round((nextY + 2.0) * 32.8);
   const groundAltitudeFt =
     terrainMode === 'mountains' ? Math.max(0, Math.round((groundY + 2.0) * 32.8)) : 0;

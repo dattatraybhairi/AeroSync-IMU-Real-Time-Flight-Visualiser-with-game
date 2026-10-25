@@ -442,9 +442,9 @@ export function generateSimulatedAttitude(
 
     case 'level':
     default:
-      pitch = Math.sin(elapsedSec * 0.5) * 1.8;
-      roll = Math.cos(elapsedSec * 0.4) * 2.2;
-      yaw = (elapsedSec * 4) % 360;
+      pitch = 0;
+      roll = 0;
+      yaw = 0;
       az = 1.0;
       break;
   }

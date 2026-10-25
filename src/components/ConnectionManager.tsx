@@ -60,10 +60,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   const [wsError, setWsError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // 4. Simulation state
+  // 4. Simulation state (defaults to steady 'level' so aircraft stops at one place until joystick moves)
   const [simManeuver, setSimManeuver] = useState<
     'level' | 'climb_dive' | 'barrel_roll' | 'turbulence' | 'figure8'
-  >('climb_dive');
+  >('level');
   const [manualMode, setManualMode] = useState(false);
   const [manualPitch, setManualPitch] = useState(0);
   const [manualRoll, setManualRoll] = useState(0);

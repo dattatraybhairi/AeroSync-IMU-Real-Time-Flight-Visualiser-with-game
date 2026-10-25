@@ -436,8 +436,6 @@ export function createTerrainWorld(
     waypointMeshes.push(ringMesh);
   });
 
-  let cloudStreamOffsetZ = 0;
-
   // Update loop for animated world elements & terrain mode visibility
   const update = (
     delta: number,
@@ -455,15 +453,14 @@ export function createTerrainWorld(
       radarPivot.rotation.y += delta * 1.8;
     }
 
-    // In 'clouds_only' mode, stream the 3D cloud deck past the stationary cruising aircraft!
+    // In 'clouds_only' mode, clouds remain stationary in world space when the aircraft stops,
+    // and wrap seamlessly within ±160m around the aircraft as the joystick moves the aircraft!
     if (terrainMode === 'clouds_only') {
-      cloudStreamOffsetZ = (cloudStreamOffsetZ + delta * 22.0) % 320;
       for (let i = 0; i < skyPuffs.length; i++) {
         const p = skyPuffs[i];
-        let zPos = p.baseZ + cloudStreamOffsetZ;
-        if (zPos > 160) zPos -= 320;
-        if (zPos < -160) zPos += 320;
-        dummy.position.set(aircraftPos.x + p.baseX, p.baseY, aircraftPos.z + zPos);
+        const relX = ((((p.baseX - aircraftPos.x) + 160) % 320) + 320) % 320 - 160;
+        const relZ = ((((p.baseZ - aircraftPos.z) + 160) % 320) + 320) % 320 - 160;
+        dummy.position.set(aircraftPos.x + relX, p.baseY, aircraftPos.z + relZ);
         dummy.rotation.set(0, p.rotY, 0);
         dummy.scale.set(p.sx, p.sy, p.sz);
         dummy.updateMatrix();
