@@ -11,6 +11,7 @@ import {
   Cloud,
   Navigation,
   ArrowLeftRight,
+  Target,
 } from 'lucide-react';
 import {
   mapHardwareJoystick,
@@ -29,6 +30,8 @@ interface JoystickRemoteHUDProps {
   onChangeTerrainMode: (mode: TerrainMode) => void;
   espJoyX?: number;
   espJoyY?: number;
+  onCalibrateIMU?: () => void;
+  calibratedFlash?: boolean;
 }
 
 export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
@@ -41,6 +44,8 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
   onChangeTerrainMode,
   espJoyX,
   espJoyY,
+  onCalibrateIMU,
+  calibratedFlash,
 }) => {
   const padRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -413,8 +418,29 @@ export const JoystickRemoteHUD: React.FC<JoystickRemoteHUDProps> = ({
         </div>
       </div>
 
-      {/* Cruise Auto-Throttle & 3-Mode Terrain Switcher (Mountains / Clouds Only / Off) */}
+      {/* Cruise Auto-Throttle, GPIO IMU Zero Calibration & 3-Mode Terrain Switcher */}
       <div className="flex flex-col gap-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-800 text-[11px]">
+        {onCalibrateIMU && (
+          <button
+            type="button"
+            data-testid="hud-calibrate-imu-btn"
+            onClick={onCalibrateIMU}
+            title="Zero current IMU Pitch, Roll & Yaw position as (0°, 0°, 0°) level flight (Hardware: Press GPIO 32 / BOOT GPIO 0, or Key: C)"
+            className={`w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md font-bold text-[10px] transition-colors cursor-pointer ${
+              calibratedFlash
+                ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                : 'bg-sky-600 hover:bg-sky-500 text-white shadow-xs'
+            }`}
+          >
+            <Target className="w-3 h-3 shrink-0" />
+            <span>
+              {calibratedFlash
+                ? 'IMU Position Calibrated (0°, 0°)!'
+                : 'Calibrate IMU Position (GPIO / Key C)'}
+            </span>
+          </button>
+        )}
+
         <div className="flex items-center justify-between gap-1">
           <button
             type="button"

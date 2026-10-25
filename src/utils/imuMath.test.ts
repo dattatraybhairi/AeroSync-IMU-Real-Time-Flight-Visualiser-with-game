@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseIMUString,
   applyCalibration,
+  computeTareCalibration,
   normalizeAngle180,
   normalizeHeading360,
   normalizeJoystickAxis,
@@ -139,3 +140,21 @@ test('generateSimulatedAttitude produces continuous flight values', () => {
   assert.ok(typeof att1.roll === 'number');
   assert.ok(typeof att1.yaw === 'number');
 });
+
+test('computeTareCalibration zeroes tilted MPU6050 stream (-84.55,-18.96,223.50) to (0, 0, 0)', () => {
+  const pkt1 = parseIMUString('-84.55,-18.96,223.50,12.35,-0.18,0.68,0.00,0.00,0')!;
+  const pkt2 = parseIMUString('-84.64,-19.33,223.54,12.27,-0.20,0.67,0.00,0.00,0')!;
+  assert.ok(pkt1 && pkt2);
+
+  const taredCfg = computeTareCalibration(pkt1, DEFAULT_CALIBRATION);
+  const cal1 = applyCalibration(pkt1, taredCfg);
+  assert.equal(cal1.pitch, 0);
+  assert.equal(cal1.roll, 0);
+  assert.equal(cal1.yaw, 0);
+
+  const cal2 = applyCalibration(pkt2, taredCfg, cal1);
+  assert.equal(cal2.pitch, 0);
+  assert.equal(cal2.roll, 0);
+  assert.equal(cal2.yaw, 0);
+});
+

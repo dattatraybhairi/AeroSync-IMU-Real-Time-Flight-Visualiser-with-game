@@ -319,6 +319,40 @@ export function parseIMUString(raw: string): IMUData | null {
 }
 
 /**
+ * Computes a new CalibrationConfig that zeroes (tares) the given raw IMU reading
+ * so that the current physical sensor position becomes (pitch: 0°, roll: 0°, yaw: 0°).
+ */
+export function computeTareCalibration(
+  raw: IMUData,
+  config: CalibrationConfig = DEFAULT_CALIBRATION
+): CalibrationConfig {
+  let pitch = raw.pitch;
+  let roll = raw.roll;
+  let yaw = raw.yaw;
+
+  if (config.axisMapping === 'swap_xy') {
+    const tmp = pitch;
+    pitch = roll;
+    roll = tmp;
+  } else if (config.axisMapping === 'swap_yz') {
+    const tmp = roll;
+    roll = yaw;
+    yaw = tmp;
+  } else if (config.axisMapping === 'swap_xz') {
+    const tmp = pitch;
+    pitch = yaw;
+    yaw = tmp;
+  }
+
+  return {
+    ...config,
+    pitchOffset: Math.round(pitch * 100) / 100,
+    rollOffset: Math.round(roll * 100) / 100,
+    yawOffset: Math.round(yaw * 100) / 100,
+  };
+}
+
+/**
  * Applies calibration offsets, axis swaps, inversions, and low-pass smoothing.
  */
 export function applyCalibration(
@@ -369,13 +403,17 @@ export function applyCalibration(
     const pitchDiff = pitch - previous.pitch;
     const rollDiff = roll - previous.roll;
 
-    // Suppress sub-degree thermal/ADC micro-jitter when hardware IMU is resting stationary
-    pitch = Math.abs(pitchDiff) < 0.15 ? previous.pitch : previous.pitch + alpha * pitchDiff;
-    roll = Math.abs(rollDiff) < 0.15 ? previous.roll : previous.roll + alpha * rollDiff;
+    // Suppress sensor noise/jitter (up to ~0.8° when MPU6050 is mounted vertically)
+    pitch = Math.abs(pitchDiff) < 0.35 ? previous.pitch : previous.pitch + alpha * pitchDiff;
+    roll = Math.abs(rollDiff) < 0.35 ? previous.roll : previous.roll + alpha * rollDiff;
     yaw =
-      Math.abs(yawDiff) < 0.25
+      Math.abs(yawDiff) < 0.45
         ? previous.yaw
         : normalizeHeading360(previous.yaw + alpha * yawDiff);
+
+    // Snap sub-degree resting offset around calibrated 0° to exact 0.0°
+    if (Math.abs(pitch) < 0.65) pitch = 0;
+    if (Math.abs(roll) < 0.65) roll = 0;
   }
 
   return {

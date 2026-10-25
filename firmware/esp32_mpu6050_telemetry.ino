@@ -33,10 +33,12 @@
 #define MPU_SDA  21
 #define MPU_SCL  22
 
-// ---------- OPTIONAL ANALOG JOYSTICK PINS ----------
-#define PIN_JOY_X  34
-#define PIN_JOY_Y  35
-#define PIN_JOY_SW 32
+// ---------- ANALOG JOYSTICK & GPIO CALIBRATION BUTTON PINS ----------
+#define PIN_JOY_X    34
+#define PIN_JOY_Y    35
+#define PIN_JOY_SW   32  // Joystick Push-Button (Active LOW -> Calibrates IMU 0,0)
+#define PIN_CAL_BTN  27  // Optional External GPIO Push-Button to GND (Calibrates IMU 0,0)
+#define PIN_BOOT_BTN  0  // Built-in ESP32 BOOT Button (Active LOW -> Calibrates IMU 0,0)
 
 Adafruit_ST7735 tft(TFT_CS, TFT_DC, TFT_RST);
 
@@ -53,9 +55,9 @@ const uint16_t WHITE  = 0xFFFF;
 const uint16_t YELLOW = 0xFFE0;
 const uint16_t BLACK  = 0x0000;
 
-// ---------- ADJUSTABLE OFFSETS ----------
-const float X_OFFSET = 2.0f;   // Pitch offset in degrees
-const float Y_OFFSET = 0.0f;   // Roll offset in degrees
+// ---------- CALIBRATED ZERO OFFSETS (Set automatically at boot or via GPIO button) ----------
+float pitchZeroOffset = 0.0f;
+float rollZeroOffset  = 0.0f;
 
 // ---------- ATTITUDE & TELEMETRY ----------
 float pitchDeg = 0.0f;
@@ -205,11 +207,22 @@ void updateAttitude(float dt) {
   while (yawDeg < 0.0f)    yawDeg += 360.0f;
 }
 
+// ---------- CALIBRATE CURRENT POSITION AS (0, 0, 0) ----------
+void calibrateCurrentPosition() {
+  pitchZeroOffset = pitchDeg;
+  rollZeroOffset  = rollDeg;
+  yawDeg          = 0.0f;
+  if (hasJoystickHardware) {
+    joyCenterX = analogRead(PIN_JOY_X);
+    joyCenterY = analogRead(PIN_JOY_Y);
+  }
+}
+
 // ---------- FULL-SCREEN HORIZON ON ST7735 TFT ----------
 void drawHorizon() {
-  // Apply offsets for display only; never accumulate them.
-  float p = constrain(pitchDeg + X_OFFSET, -35.0f, 35.0f);
-  float r = constrain(rollDeg + Y_OFFSET, -60.0f, 60.0f);
+  // Apply calibrated zero offsets so the chosen holding angle reads (0.0, 0.0)
+  float p = constrain(pitchDeg - pitchZeroOffset, -35.0f, 35.0f);
+  float r = constrain(rollDeg  - rollZeroOffset,  -60.0f, 60.0f);
 
   float angle = r * PI / 180.0f;
   float cs = cosf(angle);
@@ -316,6 +329,8 @@ void setup() {
   pinMode(PIN_JOY_X, INPUT);
   pinMode(PIN_JOY_Y, INPUT);
   pinMode(PIN_JOY_SW, INPUT_PULLUP);
+  pinMode(PIN_CAL_BTN, INPUT_PULLUP);
+  pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
   analogReadResolution(12);
 
   Wire.begin(MPU_SDA, MPU_SCL);
@@ -344,7 +359,7 @@ void setup() {
 
   calibrateGyro();
 
-  // Initial attitude estimate
+  // Initial attitude estimate & auto-zero at boot resting angle
   if (readMPU(ax, ay, az, gx, gy, gz)) {
     rollDeg =
       atan2f((float)ay, (float)az) * 180.0f / PI;
@@ -354,6 +369,8 @@ void setup() {
         -(float)ax,
         sqrtf((float)ay * ay + (float)az * az)
       ) * 180.0f / PI;
+
+    calibrateCurrentPosition();
   }
 
   lastMicros = micros();
@@ -371,14 +388,22 @@ void loop() {
     updateAttitude(dt);
   }
 
+  // Check GPIO Calibration Buttons (GPIO 32 Joystick SW, GPIO 27 Cal Button, or GPIO 0 ESP32 BOOT Button)
+  bool calPressed = (digitalRead(PIN_CAL_BTN) == LOW) ||
+                    (digitalRead(PIN_BOOT_BTN) == LOW) ||
+                    (hasJoystickHardware && digitalRead(PIN_JOY_SW) == LOW);
+  if (calPressed) {
+    calibrateCurrentPosition();
+  }
+
   // Stream 50Hz CSV telemetry to AeroSync Web Simulator
   if (millis() - lastSerial >= 20) {
     lastSerial = millis();
-    float pOut = pitchDeg + X_OFFSET;
-    float rOut = rollDeg + Y_OFFSET;
+    float pOut = pitchDeg - pitchZeroOffset;
+    float rOut = rollDeg  - rollZeroOffset;
     float joyX = hasJoystickHardware ? normalizeAxis(analogRead(PIN_JOY_X), joyCenterX) : 0.0f;
     float joyY = hasJoystickHardware ? normalizeAxis(analogRead(PIN_JOY_Y), joyCenterY) : 0.0f;
-    int joyBtn = (hasJoystickHardware && digitalRead(PIN_JOY_SW) == LOW) ? 1 : 0;
+    int joyBtn = calPressed ? 1 : 0;
 
     Serial.printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d\n",
                   pOut, rOut, yawDeg, lastAx, lastAy, lastAz, joyX, joyY, joyBtn);

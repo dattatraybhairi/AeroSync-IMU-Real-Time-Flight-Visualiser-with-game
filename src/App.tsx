@@ -17,6 +17,7 @@ import {
   type CalibrationConfig,
   DEFAULT_CALIBRATION,
   applyCalibration,
+  computeTareCalibration,
 } from './utils/imuMath';
 import {
   INITIAL_FLIGHT_STATE,
@@ -58,9 +59,13 @@ export default function App() {
     yaw: 0,
     timestamp: Date.now(),
   });
+  const rawIMURef = useRef<IMUData>(rawIMU);
+  rawIMURef.current = rawIMU;
 
   const [calibrationConfig, setCalibrationConfig] =
     useState<CalibrationConfig>(DEFAULT_CALIBRATION);
+  const calibrationConfigRef = useRef<CalibrationConfig>(calibrationConfig);
+  calibrationConfigRef.current = calibrationConfig;
 
   const prevCalibratedRef = useRef<IMUData>({
     pitch: 0,
@@ -70,6 +75,9 @@ export default function App() {
   });
 
   const [calibratedIMU, setCalibratedIMU] = useState<IMUData>(prevCalibratedRef.current);
+  const [calibratedFlash, setCalibratedFlash] = useState<boolean>(false);
+  const prevJoyBtnRef = useRef<boolean>(false);
+  const needsAutoTareOnHardwareRef = useRef<boolean>(true);
 
   // Custom Flight Remote (Stops at one place until joystick moves; turns + moves forward/backward with joystick)
   const [remoteInput, setRemoteInput] = useState<JoystickInput>({
@@ -89,6 +97,8 @@ export default function App() {
 
   // Connection & Simulation states
   const [currentSource, setCurrentSource] = useState<DataSourceType>('simulation');
+  const currentSourceRef = useRef<DataSourceType>(currentSource);
+  currentSourceRef.current = currentSource;
   const [isSimulating, setIsSimulating] = useState<boolean>(true);
 
   // Single Active Aircraft, Terrain Mode ('mountains' | 'clouds_only' | 'off') & Camera states
@@ -109,15 +119,78 @@ export default function App() {
   const [packetRate, setPacketRate] = useState<number>(40);
   const packetCountRef = useRef<number>(0);
 
+  // Calibrate current IMU position as (0°, 0°, 0°) level reference
+  const handleCalibrateIMU = useCallback((sample?: IMUData) => {
+    const targetRaw = sample || rawIMURef.current;
+    const nextCfg = computeTareCalibration(targetRaw, calibrationConfigRef.current);
+    calibrationConfigRef.current = nextCfg;
+    setCalibrationConfig(nextCfg);
+
+    const zeroed: IMUData = {
+      ...targetRaw,
+      pitch: 0,
+      roll: 0,
+      yaw: 0,
+      timestamp: Date.now(),
+    };
+    prevCalibratedRef.current = zeroed;
+    setCalibratedIMU(zeroed);
+    setCalibratedFlash(true);
+    window.setTimeout(() => setCalibratedFlash(false), 1800);
+  }, []);
+
+  // Keyboard shortcut 'C' to calibrate current IMU position at any time
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const targetTag = (e.target as HTMLElement | null)?.tagName;
+      if (targetTag && ['INPUT', 'SELECT', 'TEXTAREA'].includes(targetTag)) return;
+      if (e.key === 'c' || e.key === 'C') {
+        handleCalibrateIMU();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleCalibrateIMU]);
+
   const handleReceiveRawData = useCallback(
     (data: IMUData) => {
       packetCountRef.current += 1;
+      rawIMURef.current = data;
       setRawIMU(data);
-      const calibrated = applyCalibration(data, calibrationConfig, prevCalibratedRef.current);
+
+      let activeCfg = calibrationConfigRef.current;
+
+      // 1. Auto-calibrate on the first incoming hardware packet (WebSerial / WebSocket)
+      //    so arbitrary sensor mounting angles (e.g. -84.6°, -19.3°, 223.5°) start at a clean (0°, 0°, 0°)!
+      if (
+        needsAutoTareOnHardwareRef.current &&
+        (currentSourceRef.current === 'webserial' || currentSourceRef.current === 'websocket') &&
+        (Math.abs(data.pitch) > 0.01 || Math.abs(data.roll) > 0.01 || Math.abs(data.yaw) > 0.01)
+      ) {
+        needsAutoTareOnHardwareRef.current = false;
+        activeCfg = computeTareCalibration(data, activeCfg);
+        calibrationConfigRef.current = activeCfg;
+        setCalibrationConfig(activeCfg);
+        setCalibratedFlash(true);
+        window.setTimeout(() => setCalibratedFlash(false), 1800);
+      }
+
+      // 2. Physical ESP32 GPIO Button Calibration Trigger (column 9 joyBtn === true)
+      const isBtnPressed = Boolean(data.joyBtn);
+      if (isBtnPressed && !prevJoyBtnRef.current) {
+        activeCfg = computeTareCalibration(data, activeCfg);
+        calibrationConfigRef.current = activeCfg;
+        setCalibrationConfig(activeCfg);
+        setCalibratedFlash(true);
+        window.setTimeout(() => setCalibratedFlash(false), 1800);
+      }
+      prevJoyBtnRef.current = isBtnPressed;
+
+      const calibrated = applyCalibration(data, activeCfg, prevCalibratedRef.current);
       prevCalibratedRef.current = calibrated;
       setCalibratedIMU(calibrated);
     },
-    [calibrationConfig]
+    []
   );
 
   useEffect(() => {
@@ -129,7 +202,16 @@ export default function App() {
   }, []);
 
   const handleChangeSource = useCallback((nextSource: DataSourceType) => {
+    currentSourceRef.current = nextSource;
     setCurrentSource(nextSource);
+    needsAutoTareOnHardwareRef.current =
+      nextSource === 'webserial' || nextSource === 'websocket';
+
+    if (nextSource === 'simulation') {
+      calibrationConfigRef.current = DEFAULT_CALIBRATION;
+      setCalibrationConfig(DEFAULT_CALIBRATION);
+    }
+
     // Keep autoCruise OFF by default across all sources so the aircraft stops at one place until moved by the joystick
     setRemoteInput((prev) => ({
       ...prev,
@@ -267,7 +349,7 @@ export default function App() {
               </div>
 
               <div className="flex flex-col lg:flex-row items-start gap-2">
-                {/* Custom ESP32 Flight Remote Controller (Joystick + Forward/Backward/Left/Right) */}
+                {/* Custom ESP32 Flight Remote Controller (Joystick + Forward/Backward/Left/Right + GPIO IMU Calibration) */}
                 {hudView === 'remote' && (
                   <div className="w-[264px]">
                     <JoystickRemoteHUD
@@ -280,6 +362,8 @@ export default function App() {
                       onChangeTerrainMode={setTerrainMode}
                       espJoyX={calibratedIMU.joyX}
                       espJoyY={calibratedIMU.joyY}
+                      onCalibrateIMU={() => handleCalibrateIMU()}
+                      calibratedFlash={calibratedFlash}
                     />
                   </div>
                 )}
@@ -371,8 +455,14 @@ export default function App() {
           isSimulating={isSimulating}
           setIsSimulating={setIsSimulating}
           calibrationConfig={calibrationConfig}
-          setCalibrationConfig={setCalibrationConfig}
+          setCalibrationConfig={(cfg) => {
+            calibrationConfigRef.current = cfg;
+            setCalibrationConfig(cfg);
+          }}
           rawIMU={rawIMU}
+          calibratedIMU={calibratedIMU}
+          onCalibrateIMU={() => handleCalibrateIMU()}
+          calibratedFlash={calibratedFlash}
           activeTab={dockTab}
           setActiveTab={setDockTab}
         />

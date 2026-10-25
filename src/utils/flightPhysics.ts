@@ -193,7 +193,7 @@ export function stepFlightPhysics(
       ? hwJoyY
       : remote.joyY;
 
-  const boostMultiplier = remote.boost || imu.joyBtn ? 1.65 : 1.0;
+  const boostMultiplier = remote.boost ? 1.65 : 1.0;
 
   // Target forward/backward velocity (m/s):
   // Aircraft stays stopped at one place when joystick is at rest (unless user explicitly toggles autoCruise ON).
@@ -225,7 +225,9 @@ export function stepFlightPhysics(
     lateralSpeed = 0;
   }
 
-  // Turning: When joystick X is deflected (and turnOnSideways !== false), turn aircraft heading smoothly in that direction
+  // Turning: When joystick X is deflected (and turnOnSideways !== false), turn aircraft heading smoothly in that direction.
+  // When connected to an ESP32 + Joystick (imu.joyX !== undefined), heading is steered purely by the joystick
+  // so MPU6050 Z-gyro thermal drift (e.g. 223.50 -> 223.79) never spins the aircraft or camera!
   const shouldTurn = remote.turnOnSideways !== false;
   const turnRateDegPerSec =
     shouldTurn && Math.abs(effectiveJoyX) > 0.01
@@ -234,7 +236,9 @@ export function stepFlightPhysics(
   const newYawAccumulator = normalizeHeading360(
     prevState.yawAccumulator + turnRateDegPerSec * clampedDt
   );
-  const headingDeg = normalizeHeading360(imu.yaw + newYawAccumulator);
+  const headingDeg = normalizeHeading360(
+    (imu.joyX !== undefined ? 0 : imu.yaw) + newYawAccumulator
+  );
   const headingRad = degreesToRadians(headingDeg);
 
   // In Three.js aeronautical coordinates (matching euler.set(pRad, -yRad, -rRad, 'YXZ')):

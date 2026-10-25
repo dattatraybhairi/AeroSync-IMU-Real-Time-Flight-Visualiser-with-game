@@ -139,7 +139,7 @@ test('stepFlightPhysics keeps aircraft and camera target 100% stationary when ES
   assert.equal(state.x, initialX, 'X position must not drift when stationary');
   assert.equal(state.y, initialY, 'Y altitude must not drift when stationary');
   assert.equal(state.z, initialZ, 'Z position must not drift when stationary');
-  assert.equal(state.headingDeg, 42.0, 'Heading must not drift from roll tilt when stationary');
+  assert.equal(state.headingDeg, 0, 'Heading must stay locked at 0° despite MPU6050 yaw drift when joystick is untouched');
 });
 
 test('stepFlightPhysics stops aircraft at one place when joystick is neutral and moves/turns when joystick is deflected', () => {

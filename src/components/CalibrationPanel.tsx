@@ -1,5 +1,10 @@
 import React from 'react';
-import { type CalibrationConfig, type IMUData, DEFAULT_CALIBRATION } from '../utils/imuMath';
+import {
+  type CalibrationConfig,
+  type IMUData,
+  DEFAULT_CALIBRATION,
+  computeTareCalibration,
+} from '../utils/imuMath';
 import { RotateCcw, Target } from 'lucide-react';
 
 interface CalibrationPanelProps {
@@ -15,12 +20,7 @@ export const CalibrationPanel: React.FC<CalibrationPanelProps> = ({
 }) => {
   // Tare current orientation as level (0, 0, 0)
   const handleTare = () => {
-    onChange({
-      ...config,
-      pitchOffset: rawIMU.pitch,
-      rollOffset: rawIMU.roll,
-      yawOffset: rawIMU.yaw,
-    });
+    onChange(computeTareCalibration(rawIMU, config));
   };
 
   const handleReset = () => {

@@ -16,6 +16,7 @@ import {
   AlertCircle,
   Compass,
   MousePointer,
+  Target,
 } from 'lucide-react';
 
 export type DataSourceType = 'device_imu' | 'simulation' | 'webserial' | 'websocket';
@@ -26,6 +27,10 @@ interface ConnectionManagerProps {
   onReceiveRawData: (data: IMUData, rawText?: string) => void;
   isSimulating: boolean;
   setIsSimulating: (sim: boolean) => void;
+  onCalibrateIMU?: () => void;
+  rawIMU?: IMUData;
+  calibratedIMU?: IMUData;
+  calibratedFlash?: boolean;
 }
 
 export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
@@ -34,6 +39,10 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
   onReceiveRawData,
   isSimulating,
   setIsSimulating,
+  onCalibrateIMU,
+  rawIMU,
+  calibratedIMU,
+  calibratedFlash,
 }) => {
   // 1. Local Device IMU state (Phone / Tablet / Laptop)
   const [deviceSensorStatus, setDeviceSensorStatus] = useState<
@@ -779,6 +788,43 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
         </div>
       )}
 
+      {/* Quick GPIO / One-Click IMU Position Zero Calibration Bar */}
+      {onCalibrateIMU && (
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-900/95 text-slate-100 px-3 py-2 rounded-lg border border-sky-500/40 text-xs">
+          <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
+            <span className="font-sans font-semibold text-sky-400">IMU Zero Calibration:</span>
+            {rawIMU && (
+              <span className="text-slate-400">
+                Raw: P:{rawIMU.pitch.toFixed(1)}° R:{rawIMU.roll.toFixed(1)}° Y:{rawIMU.yaw.toFixed(0)}°
+              </span>
+            )}
+            {calibratedIMU && (
+              <span className="text-emerald-400 font-bold">
+                → Calibrated: P:{calibratedIMU.pitch.toFixed(1)}° R:{calibratedIMU.roll.toFixed(1)}°
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            data-testid="serial-calibrate-imu-btn"
+            onClick={onCalibrateIMU}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold transition-colors cursor-pointer ${
+              calibratedFlash
+                ? 'bg-emerald-500 text-slate-950'
+                : 'bg-sky-600 hover:bg-sky-500 text-white'
+            }`}
+            title="Set current physical IMU holding position as (0°, 0°, 0°) level flight (or press GPIO 32 / BOOT GPIO 0 on ESP32)"
+          >
+            <Target className="w-3.5 h-3.5" />
+            <span>
+              {calibratedFlash
+                ? 'Calibrated to 0.0°!'
+                : 'Calibrate IMU Position (GPIO 32/0 or Click)'}
+            </span>
+          </button>
+        </div>
+      )}
+
       {/* Raw Incoming Line Console Monitor */}
       {recentLines.length > 0 && (
         <div className="bg-slate-900 text-slate-200 p-2.5 rounded-lg text-xs font-mono flex flex-col gap-1 shadow-inner">
@@ -787,13 +833,24 @@ export const ConnectionManager: React.FC<ConnectionManagerProps> = ({
               <Terminal className="w-3 h-3 text-emerald-400" />
               <span>Raw Serial / Stream Monitor</span>
             </span>
-            <button
-              type="button"
-              onClick={() => setRecentLines([])}
-              className="text-[10px] text-slate-400 hover:text-white"
-            >
-              Clear
-            </button>
+            <div className="flex items-center gap-3">
+              {onCalibrateIMU && (
+                <button
+                  type="button"
+                  onClick={onCalibrateIMU}
+                  className="text-[10px] font-sans font-semibold text-emerald-400 hover:text-emerald-300 cursor-pointer"
+                >
+                  Zero Current Position (0°, 0°)
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setRecentLines([])}
+                className="text-[10px] text-slate-400 hover:text-white cursor-pointer"
+              >
+                Clear
+              </button>
+            </div>
           </div>
           <div className="flex flex-col gap-0.5 pt-1 text-[11px]">
             {recentLines.map((ln, idx) => (

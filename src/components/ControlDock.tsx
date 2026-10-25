@@ -37,6 +37,9 @@ interface ControlDockProps {
   calibrationConfig: CalibrationConfig;
   setCalibrationConfig: (cfg: CalibrationConfig) => void;
   rawIMU: IMUData;
+  calibratedIMU?: IMUData;
+  onCalibrateIMU?: () => void;
+  calibratedFlash?: boolean;
   activeTab: 'aircraft' | 'connection' | 'calibration';
   setActiveTab: (tab: 'aircraft' | 'connection' | 'calibration') => void;
 }
@@ -61,6 +64,9 @@ export const ControlDock: React.FC<ControlDockProps> = ({
   calibrationConfig,
   setCalibrationConfig,
   rawIMU,
+  calibratedIMU,
+  onCalibrateIMU,
+  calibratedFlash,
   activeTab,
   setActiveTab,
 }) => {
@@ -313,6 +319,10 @@ export const ControlDock: React.FC<ControlDockProps> = ({
             onReceiveRawData={onReceiveRawData}
             isSimulating={isSimulating}
             setIsSimulating={setIsSimulating}
+            onCalibrateIMU={onCalibrateIMU}
+            rawIMU={rawIMU}
+            calibratedIMU={calibratedIMU}
+            calibratedFlash={calibratedFlash}
           />
         </div>
 
