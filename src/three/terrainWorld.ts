@@ -357,7 +357,7 @@ export function createTerrainWorld(
   worldGroup.add(cloudInst);
 
   // 7b. Multi-Layered Flight-Level Cloud Deck for 'clouds_only' Terrain Mode
-  // Surrounds the aircraft with volumetric cloud formations at y = -12..+26 so flying in Clouds-Only mode feels immersive!
+  // Surrounds the aircraft with volumetric cloud formations that stream past the aircraft while it cruises at one point!
   const skyDeckCloudPuffs = 150;
   const skyCloudMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -366,32 +366,52 @@ export function createTerrainWorld(
     flatShading: true,
   });
   const skyDeckInst = new THREE.InstancedMesh(cloudGeo, skyCloudMat, skyDeckCloudPuffs);
-  let puffIdx = 0;
-  for (let c = 0; c < 70 && puffIdx < skyDeckCloudPuffs; c++) {
-    const baseCx = (nextRand() - 0.5) * 340;
-    const baseCz = (nextRand() - 0.5) * 340;
+  interface CloudPuffTransform {
+    baseX: number;
+    baseY: number;
+    baseZ: number;
+    rotY: number;
+    sx: number;
+    sy: number;
+    sz: number;
+  }
+  const skyPuffs: CloudPuffTransform[] = [];
+
+  for (let c = 0; c < 70 && skyPuffs.length < skyDeckCloudPuffs; c++) {
+    const baseCx = (nextRand() - 0.5) * 320;
+    const baseCz = (nextRand() - 0.5) * 320;
     const baseCy = -10 + nextRand() * 34; // Spread across flight altitudes (-10m to +24m)
-    // Keep immediate spawn/camera view pocket clear so the aircraft is always unobstructed
-    if (Math.hypot(baseCx, baseCz) < 22 && Math.abs(baseCy - 2) < 8) continue;
+    // Keep immediate central lane (|x| < 16, |y - 8.5| < 7) clear so no cloud passes right through the camera lens
+    if (Math.abs(baseCx) < 16 && Math.abs(baseCy - 8.5) < 7) continue;
     const rotY = nextRand() * Math.PI;
 
     // Each cloud cluster has 3 overlapping puffs (center, left, right) for rich cumulus silhouette
-    for (let sub = 0; sub < 3 && puffIdx < skyDeckCloudPuffs; sub++) {
+    for (let sub = 0; sub < 3 && skyPuffs.length < skyDeckCloudPuffs; sub++) {
       const offsetX = sub === 0 ? 0 : (sub === 1 ? -2.8 : 2.8) + (nextRand() - 0.5) * 1.2;
       const offsetY = sub === 0 ? 0.5 : -0.3 + (nextRand() - 0.5) * 0.4;
       const offsetZ = (nextRand() - 0.5) * 1.8;
-      dummy.position.set(baseCx + offsetX, baseCy + offsetY, baseCz + offsetZ);
-      dummy.rotation.set(0, rotY + sub * 0.5, 0);
       const sx = (sub === 0 ? 2.1 : 1.5) + nextRand() * 0.9;
       const sy = (sub === 0 ? 0.75 : 0.55) + nextRand() * 0.25;
       const sz = (sub === 0 ? 1.6 : 1.2) + nextRand() * 0.8;
-      dummy.scale.set(sx, sy, sz);
+
+      const puff: CloudPuffTransform = {
+        baseX: baseCx + offsetX,
+        baseY: baseCy + offsetY,
+        baseZ: baseCz + offsetZ,
+        rotY: rotY + sub * 0.5,
+        sx,
+        sy,
+        sz,
+      };
+      dummy.position.set(puff.baseX, puff.baseY, puff.baseZ);
+      dummy.rotation.set(0, puff.rotY, 0);
+      dummy.scale.set(puff.sx, puff.sy, puff.sz);
       dummy.updateMatrix();
-      skyDeckInst.setMatrixAt(puffIdx, dummy.matrix);
-      puffIdx++;
+      skyDeckInst.setMatrixAt(skyPuffs.length, dummy.matrix);
+      skyPuffs.push(puff);
     }
   }
-  skyDeckInst.count = puffIdx;
+  skyDeckInst.count = skyPuffs.length;
   skyDeckInst.instanceMatrix.needsUpdate = true;
   skyDeckInst.computeBoundingSphere();
   skyDeckInst.frustumCulled = false;
@@ -416,14 +436,17 @@ export function createTerrainWorld(
     waypointMeshes.push(ringMesh);
   });
 
+  let cloudStreamOffsetZ = 0;
+
   // Update loop for animated world elements & terrain mode visibility
   const update = (
     delta: number,
     elapsedTime: number,
     waypoints: WaypointRing[],
-    _aircraftPos: THREE.Vector3,
+    aircraftPos: THREE.Vector3,
     terrainMode: TerrainMode = 'mountains'
   ) => {
+    worldGroup.visible = terrainMode !== 'off';
     groundTerrainGroup.visible = terrainMode === 'mountains';
     cloudsOnlyGroup.visible = terrainMode === 'clouds_only';
 
@@ -432,11 +455,31 @@ export function createTerrainWorld(
       radarPivot.rotation.y += delta * 1.8;
     }
 
-    // Update waypoint ring visual state & gentle spin
+    // In 'clouds_only' mode, stream the 3D cloud deck past the stationary cruising aircraft!
+    if (terrainMode === 'clouds_only') {
+      cloudStreamOffsetZ = (cloudStreamOffsetZ + delta * 22.0) % 320;
+      for (let i = 0; i < skyPuffs.length; i++) {
+        const p = skyPuffs[i];
+        let zPos = p.baseZ + cloudStreamOffsetZ;
+        if (zPos > 160) zPos -= 320;
+        if (zPos < -160) zPos += 320;
+        dummy.position.set(aircraftPos.x + p.baseX, p.baseY, aircraftPos.z + zPos);
+        dummy.rotation.set(0, p.rotY, 0);
+        dummy.scale.set(p.sx, p.sy, p.sz);
+        dummy.updateMatrix();
+        skyDeckInst.setMatrixAt(i, dummy.matrix);
+      }
+      skyDeckInst.instanceMatrix.needsUpdate = true;
+    }
+
+    // Update waypoint ring visual state & gentle spin (only visible in 'mountains' mode)
     for (let i = 0; i < waypointMeshes.length; i++) {
       const mesh = waypointMeshes[i];
       const wp = waypoints[i];
       if (!mesh || !wp) continue;
+
+      mesh.visible = terrainMode === 'mountains';
+      if (!mesh.visible) continue;
 
       mesh.rotation.z = elapsedTime * 0.8 + i;
       const mat = mesh.material as THREE.MeshStandardMaterial;

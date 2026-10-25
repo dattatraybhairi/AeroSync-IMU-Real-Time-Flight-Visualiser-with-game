@@ -21,16 +21,17 @@ export interface JoystickInput {
 
 /**
  * Maps incoming ESP32 hardware joystick axes (VRx, VRy) with configurable VRx/VRy swap and axis reversal.
+ * Always returns numeric joyX and joyY (0 when disconnected) so callers never encounter undefined/NaN.
  */
 export function mapHardwareJoystick(
   imu: IMUData,
   remote: Pick<JoystickInput, 'swapVRxVRy' | 'reverseX' | 'reverseY'>
-): { hwJoyX?: number; hwJoyY?: number } {
+): { joyX: number; joyY: number; hwJoyX?: number; hwJoyY?: number } {
   if (imu.joyX === undefined && imu.joyY === undefined) {
-    return { hwJoyX: undefined, hwJoyY: undefined };
+    return { joyX: 0, joyY: 0, hwJoyX: undefined, hwJoyY: undefined };
   }
-  const rawX = imu.joyX ?? 0;
-  const rawY = imu.joyY ?? 0;
+  const rawX = Number.isFinite(imu.joyX) ? (imu.joyX as number) : 0;
+  const rawY = Number.isFinite(imu.joyY) ? (imu.joyY as number) : 0;
   const swap = remote.swapVRxVRy ?? false;
   const revX = remote.reverseX ?? false;
   const revY = remote.reverseY ?? false;
@@ -42,6 +43,8 @@ export function mapHardwareJoystick(
   if (revY && mappedY !== 0) mappedY = -mappedY;
 
   return {
+    joyX: mappedX,
+    joyY: mappedY,
     hwJoyX: mappedX,
     hwJoyY: mappedY,
   };
@@ -193,9 +196,10 @@ export function stepFlightPhysics(
   const boostMultiplier = remote.boost || imu.joyBtn ? 1.65 : 1.0;
 
   // Target forward/backward velocity (m/s):
-  // If user actively pulls backward (effectiveJoyY < -0.05), allow direct backward movement even if autoCruise is on!
+  // In 'clouds_only' mode, autoCruise means the aircraft stays in cruise at one fixed point while clouds stream past it;
+  // only explicit joystick Y input (effectiveJoyY) translates the aircraft position forward/backward!
   let targetForwardCmd = effectiveJoyY;
-  if (remote.autoCruise && effectiveJoyY >= -0.05) {
+  if (terrainMode !== 'clouds_only' && remote.autoCruise && effectiveJoyY >= -0.05) {
     targetForwardCmd = Math.max(remote.cruiseThrottle, effectiveJoyY);
   }
 
@@ -229,7 +233,11 @@ export function stepFlightPhysics(
   const newYawAccumulator = normalizeHeading360(
     prevState.yawAccumulator + turnRateDegPerSec * clampedDt
   );
-  const headingDeg = normalizeHeading360(imu.yaw + newYawAccumulator);
+  // In 'clouds_only' cruise-at-one-point mode, keep heading aligned with the incoming cloud stream unless turning is enabled
+  const headingDeg =
+    terrainMode === 'clouds_only' && !remote.turnOnSideways
+      ? 0
+      : normalizeHeading360(imu.yaw + newYawAccumulator);
   const headingRad = degreesToRadians(headingDeg);
 
   // In Three.js aeronautical coordinates (matching euler.set(pRad, -yRad, -rRad, 'YXZ')):
@@ -243,11 +251,16 @@ export function stepFlightPhysics(
   const vx = fwdX * forwardSpeed + rightX * lateralSpeed;
   const vz = fwdZ * forwardSpeed + rightZ * lateralSpeed;
 
-  // Vertical climb/descent rate from Pitch angle ONLY when the aircraft is actually moving
+  // Vertical climb/descent rate from Pitch angle ONLY when the aircraft is actually translating across terrain
   const pitchDeadbanded = Math.abs(imu.pitch) > 2.5 ? imu.pitch : 0;
   const pitchRad = degreesToRadians(Math.max(-65, Math.min(65, pitchDeadbanded)));
   const activeSpeedMag = Math.abs(forwardSpeed) + Math.abs(lateralSpeed) * 0.35;
-  const vy = activeSpeedMag > 0.2 ? Math.sin(pitchRad) * activeSpeedMag * 0.65 : 0;
+  const vy =
+    terrainMode === 'clouds_only'
+      ? 0
+      : activeSpeedMag > 0.2
+      ? Math.sin(pitchRad) * activeSpeedMag * 0.65
+      : 0;
 
   let nextX = prevState.x + vx * clampedDt;
   let nextZ = prevState.z + vz * clampedDt;
@@ -265,9 +278,9 @@ export function stepFlightPhysics(
   const maxCeilingY = 62.0;
   nextY = Math.max(minClearanceY, Math.min(maxCeilingY, nextY));
 
-  // Waypoint ring collection check
+  // Waypoint ring collection check (active in mountains mode)
   let ringsCollected = prevState.ringsCollected;
-  if (waypoints) {
+  if (waypoints && terrainMode === 'mountains') {
     for (const ring of waypoints) {
       if (!ring.collected) {
         const dx = nextX - ring.x;
@@ -283,7 +296,12 @@ export function stepFlightPhysics(
   }
 
   const totalSpeedMs = Math.sqrt(vx * vx + vy * vy + vz * vz);
-  const airspeedKts = Math.round(totalSpeedMs * 6.5); // Scaled knots for flight sim feel
+  // In clouds_only mode, display simulated cruise airspeed (~118 KT) even while aircraft holds one point
+  const cruiseAirspeedMs =
+    terrainMode === 'clouds_only' && remote.autoCruise
+      ? Math.max(totalSpeedMs, remote.cruiseThrottle * maxForwardSpeed)
+      : totalSpeedMs;
+  const airspeedKts = Math.round(cruiseAirspeedMs * 6.5);
   const altitudeFt = Math.round((nextY + 2.0) * 32.8);
   const groundAltitudeFt =
     terrainMode === 'mountains' ? Math.max(0, Math.round((groundY + 2.0) * 32.8)) : 0;

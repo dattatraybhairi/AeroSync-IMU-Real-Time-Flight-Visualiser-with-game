@@ -109,6 +109,20 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
     }
   }, [resetCounter]);
 
+  // When switching to 'clouds_only', hold aircraft stationary in cruise at its current point
+  useEffect(() => {
+    if (terrainMode === 'clouds_only') {
+      flightStateRef.current = {
+        ...flightStateRef.current,
+        forwardSpeed: 0,
+        lateralSpeed: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+      };
+    }
+  }, [terrainMode]);
+
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
@@ -425,20 +439,24 @@ export const AeroViewport: React.FC<AeroViewportProps> = ({
       flightStateRef.current = nextFlight;
       currPlanePos.set(nextFlight.x, nextFlight.y, nextFlight.z);
 
-      // Compute visual bank roll & dynamic heading
+      // Compute visual bank roll & dynamic heading (strictly finite so aircraft quaternion is never NaN)
       const mappedHw = mapHardwareJoystick(imuRef.current, effectiveRemote);
-      const sidewaysStick =
+      const rawSideways =
         Math.abs(effectiveRemote.joyX) >= Math.abs(mappedHw.joyX)
           ? effectiveRemote.joyX
           : mappedHw.joyX;
+      const sidewaysStick = Number.isFinite(rawSideways) ? rawSideways : 0;
+      const safePitch = Number.isFinite(pitch) ? pitch : 0;
+      const safeRoll = Number.isFinite(roll) ? roll : 0;
+      const safeHeading = Number.isFinite(nextFlight.headingDeg) ? nextFlight.headingDeg : 0;
 
       const visualRoll = Math.max(
         -85,
-        Math.min(85, roll + sidewaysStick * 18)
+        Math.min(85, safeRoll + sidewaysStick * 18)
       );
-      const pRad = degreesToRadians(pitch);
+      const pRad = degreesToRadians(safePitch);
       const rRad = degreesToRadians(visualRoll);
-      const yRad = degreesToRadians(nextFlight.headingDeg);
+      const yRad = degreesToRadians(safeHeading);
 
       // Aeronautical YXZ Euler order (Forward = -Z)
       euler.set(pRad, -yRad, -rRad, 'YXZ');

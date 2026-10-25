@@ -171,4 +171,38 @@ test('stepFlightPhysics moves sideways without turning heading left when turnOnS
   assert.equal(state.headingDeg, 0, 'Aircraft heading must stay at 0° instead of turning left when moving sideways');
 });
 
+test('stepFlightPhysics in clouds_only mode keeps aircraft cruising at one fixed point when joystick is neutral', () => {
+  const simIMU: IMUData = {
+    pitch: 8.5,
+    roll: -12.0,
+    yaw: 45.0,
+    timestamp: Date.now(),
+  };
+
+  const remote: JoystickInput = {
+    joyX: 0,
+    joyY: 0,
+    autoCruise: true,
+    cruiseThrottle: 0.65,
+    swapVRxVRy: true,
+    reverseX: true,
+    reverseY: true,
+    turnOnSideways: false,
+  };
+
+  let state = { ...INITIAL_FLIGHT_STATE };
+  const startX = state.x;
+  const startY = state.y;
+  const startZ = state.z;
+
+  for (let i = 0; i < 60; i++) {
+    state = stepFlightPhysics(state, simIMU, remote, 0.016, undefined, 'clouds_only');
+  }
+
+  assert.equal(state.x, startX, 'Aircraft X must stay at one point during clouds_only cruise');
+  assert.equal(state.y, startY, 'Aircraft Y must stay at one point during clouds_only cruise');
+  assert.equal(state.z, startZ, 'Aircraft Z must stay at one point during clouds_only cruise');
+  assert.ok(state.airspeedKts > 100, `Expected cruise airspeed > 100 KT in clouds_only mode, got ${state.airspeedKts}`);
+});
+
 
